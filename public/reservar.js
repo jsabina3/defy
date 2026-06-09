@@ -1,0 +1,635 @@
+/* ===================== Estado ===================== */
+const state = {
+  step: 0,
+  prefs: {
+    departureCity: "Madrid",
+    travelers: 2,
+    nights: 2,
+    vibes: [],
+    climate: "any",
+    pace: "balanced",
+    hiddenGems: true,
+  },
+  quote: null,        // respuesta de /api/quote
+  discarded: new Set(),
+  selectedDate: null, // 'YYYY-MM-DD'
+  selectedTier: "none", // arranca en "solo vuelo + hotel"; el nivel se elige en el paso 3
+  calMonth: null,     // Date (día 1 del mes mostrado)
+  resultStep: 0,      // 0 calendario · 1 destinos · 2 experiencia
+};
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const euro = (n) => new Intl.NumberFormat("es-ES").format(Math.round(n)) + " €";
+const roundUpTo = (n, step) => Math.ceil(n / step) * step;
+
+/* Reglas de descarte: hasta 2 destinos; el 1º gratis, el 2º +10 €/persona. */
+const MAX_DISCARDS = 2;
+const DISCARD_FEE_PP = 10;
+function discardFeeTotal() {
+  return Math.max(0, state.discarded.size - 1) * DISCARD_FEE_PP * state.prefs.travelers;
+}
+
+/* Caché de precios en firme (clave: fecha|tier|descartes|destinos activos) */
+const priceCache = {};
+let priceReqSeq = 0;
+function priceKey() {
+  return [
+    state.selectedDate, state.selectedTier, state.discarded.size,
+    activeDestinations().map((d) => d.id).join(","),
+  ].join("|");
+}
+
+/* ===================== Animaciones de entrada ===================== */
+const io = new IntersectionObserver((entries) => {
+  entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
+}, { threshold: 0.15 });
+$$(".reveal").forEach((el) => io.observe(el));
+
+/* ===================== Quiz ===================== */
+const STEPS = 3;
+const quizBar = $("#quizBar");
+const prevBtn = $("#quizPrev");
+const nextBtn = $("#quizNext");
+
+function showStep(n) {
+  state.step = n;
+  $$(".quiz-step").forEach((s) => s.classList.toggle("is-active", +s.dataset.step === n));
+  quizBar.style.width = ((n + 1) / STEPS) * 100 + "%";
+  prevBtn.disabled = n === 0;
+  nextBtn.textContent = n === STEPS - 1 ? "Ver mis destinos y precios" : "Siguiente";
+}
+prevBtn.addEventListener("click", () => state.step > 0 && showStep(state.step - 1));
+nextBtn.addEventListener("click", () => {
+  if (state.step < STEPS - 1) showStep(state.step + 1);
+  else submitQuiz();
+});
+
+// Stepper viajeros
+$$("[data-step-btn]").forEach((b) => b.addEventListener("click", () => {
+  const input = $("#travelers");
+  let v = +input.value + (b.dataset.stepBtn === "inc" ? 1 : -1);
+  v = Math.max(1, Math.min(8, v));
+  input.value = v; state.prefs.travelers = v;
+}));
+
+// Duración
+$$("#nightsChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#nightsChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected"); state.prefs.nights = +c.dataset.nights;
+}));
+
+// Ciudad
+$("#departureCity").addEventListener("change", (e) => state.prefs.departureCity = e.target.value);
+
+// Vibes
+$$("#vibes .chip").forEach((c) => c.addEventListener("click", () => {
+  c.classList.toggle("is-selected");
+  state.prefs.vibes = $$("#vibes .chip.is-selected").map((x) => x.dataset.vibe);
+}));
+
+// Clima / ritmo
+$$("#climateChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#climateChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected"); state.prefs.climate = c.dataset.climate;
+}));
+$$("#paceChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#paceChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected"); state.prefs.pace = c.dataset.pace;
+}));
+
+// Joyas escondidas
+$("#hiddenGems").addEventListener("change", (e) => state.prefs.hiddenGems = e.target.checked);
+
+/* ===================== Cotización ===================== */
+async function submitQuiz() {
+  $("#quiz").hidden = true;
+  $("#loading").hidden = false;
+  $("#results").hidden = true;
+  try {
+    const res = await fetch("/api/quote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state.prefs),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Error");
+    state.quote = data;
+    state.prefs = data.prefs; // normalizado por el servidor
+    state.discarded = new Set();
+    state.selectedDate = null;
+    Object.keys(priceCache).forEach((k) => delete priceCache[k]);
+    state.selectedTier = "none";
+    state.calMonth = startMonth(minDate());
+    renderResults();
+    $("#loading").hidden = true;
+    $("#results").hidden = false;
+    $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (err) {
+    $("#loading").hidden = true;
+    $("#quiz").hidden = false;
+    alert("No hemos podido generar tu viaje. Inténtalo de nuevo en un momento.");
+    console.error(err);
+  }
+}
+
+$("#editPrefs").addEventListener("click", () => {
+  $("#results").hidden = true;
+  $("#quiz").hidden = false;
+  $("#summaryBar").hidden = true;
+  $("#quiz").scrollIntoView({ behavior: "smooth", block: "center" });
+});
+
+/* ===================== Render destinos ===================== */
+function gradientFor(seed) {
+  let h = 0; for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  const a = Math.abs(h) % 360, b = (Math.abs(h) >> 3) % 360;
+  return `linear-gradient(145deg, hsl(${a} 55% 32%), hsl(${b} 60% 22%))`;
+}
+function imgSrc(image) {
+  if (!image) return null;
+  // El servidor ya resuelve la mejor fuente (local > Unsplash > LoremFlickr).
+  if (image.url) return image.url;
+  // Compatibilidad con el formato antiguo del catálogo.
+  if (image.kind === "local") return image.path;
+  if (image.query) return `https://loremflickr.com/1200/800/${encodeURIComponent(image.query)}/all?lock=${image.lock}`;
+  return null;
+}
+
+function renderResults() {
+  $("#resultSource").textContent = state.quote.source === "openai"
+    ? "Seleccionado para ti con IA" : "Seleccionado para ti";
+  renderDestinations();
+  renderTiers();
+  renderCalendar();
+  showResultStep(0);
+  updateSummary();
+}
+
+/* ===================== Navegación del carrito (3 páginas) ===================== */
+const RSTEPS = 3;
+function showResultStep(n) {
+  state.resultStep = n;
+  $$(".result-step").forEach((s) => s.classList.toggle("is-active", +s.dataset.rstep === n));
+  $$(".rstep-pill").forEach((p) => p.classList.toggle("is-on", +p.dataset.pill <= n));
+  updateResultNav();
+  $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function updateResultNav() {
+  const prev = $("#rPrev"), next = $("#rNext");
+  if (!prev || !next) return;
+  prev.disabled = state.resultStep === 0;
+  if (state.resultStep === RSTEPS - 1) {
+    next.textContent = "Reservar a ciegas";
+    next.disabled = !state.selectedDate;
+  } else {
+    next.textContent = "Siguiente →";
+    next.disabled = state.resultStep === 0 && !state.selectedDate;
+  }
+}
+$("#rPrev").addEventListener("click", () => { if (state.resultStep > 0) showResultStep(state.resultStep - 1); });
+$("#rNext").addEventListener("click", () => {
+  if (state.resultStep < RSTEPS - 1) showResultStep(state.resultStep + 1);
+  else checkout();
+});
+
+function renderDestinations() {
+  const grid = $("#destGrid");
+  grid.innerHTML = "";
+  const limitReached = state.discarded.size >= MAX_DISCARDS;
+  const onlyOneLeft = activeDestinations().length <= 1;
+
+  state.quote.destinations.forEach((d) => {
+    const isDiscarded = state.discarded.has(d.id);
+    const el = document.createElement("article");
+    el.className = "dest" + (isDiscarded ? " is-discarded" : "");
+    el.style.background = gradientFor(d.name);
+
+    const src = imgSrc(d.image);
+    const img = src ? `<img class="dest-bg" src="${src}" alt="${d.name}" loading="lazy"
+      onerror="this.style.display='none'">` : "";
+    const gem = d.isHiddenGem ? `<span class="dest-badge">◈ Joya escondida</span>` : "";
+    const transfer = d.transfer ? `<div class="dest-transfer">🚆 ${d.transfer}</div>` : "";
+
+    // Coste de descartar este destino: gratis si sería el 1º, +10 €/p si sería el 2º.
+    const wouldBeFee = !isDiscarded && state.discarded.size === 1;
+    const feeTag = wouldBeFee ? `<span class="dest-feetag">+${euro(DISCARD_FEE_PP)}/persona</span>` : "";
+    // Deshabilitamos descartar más si ya hay 2 o si solo queda 1 activo.
+    const disabled = !isDiscarded && (limitReached || onlyOneLeft);
+
+    el.innerHTML = `
+      ${img}
+      ${gem}
+      <button class="dest-discard${disabled ? " is-disabled" : ""}" title="${isDiscarded ? "Recuperar destino" : disabled ? "Máximo 2 descartes" : "Descartar destino"}" data-id="${d.id}"${disabled ? " disabled" : ""}>${isDiscarded ? "↺" : "✕"}</button>
+      ${feeTag}
+      <div class="dest-body">
+        <div class="dest-name">${d.name}</div>
+        <div class="dest-country">${d.region ? d.region + " · " : ""}${d.country}</div>
+        <div class="dest-reason">${d.matchReason || d.blurb || ""}</div>
+        ${transfer}
+      </div>`;
+    grid.appendChild(el);
+  });
+
+  $$(".dest-discard").forEach((b) => b.addEventListener("click", () => {
+    const id = b.dataset.id;
+    if (state.discarded.has(id)) {
+      state.discarded.delete(id);
+    } else {
+      if (state.discarded.size >= MAX_DISCARDS) return; // no más de 2
+      if (activeDestinations().length <= 1) return;      // no descartar el último
+      state.discarded.add(id);
+    }
+    renderDestinations();
+    renderCalendar();
+    updateSummary();
+    refreshPrice();
+  }));
+}
+
+function activeDestinations() {
+  return state.quote.destinations.filter((d) => !state.discarded.has(d.id));
+}
+
+/* ===================== Tiers ===================== */
+function renderTiers() {
+  const wrap = $("#tiers");
+  wrap.innerHTML = "";
+
+  // opción "sin actividades"
+  const none = document.createElement("div");
+  none.className = "tier" + (state.selectedTier === "none" ? " is-selected" : "");
+  none.dataset.tier = "none";
+  none.innerHTML = `<div class="tier-top"><span class="tier-name">Solo vuelo + hotel</span>
+    <span class="tier-price">Incluido</span></div>
+    <p class="tier-tag tier-none">Sin actividades sorpresa. Tú decides sobre la marcha.</p>`;
+  wrap.appendChild(none);
+
+  state.quote.tiers.forEach((t) => {
+    const charged = t.pricePerPerson ?? t.perPersonCost;
+    const el = document.createElement("div");
+    el.className = "tier" + (state.selectedTier === t.id ? " is-selected" : "");
+    el.dataset.tier = t.id;
+    el.innerHTML = `
+      <div class="tier-top">
+        <span class="tier-name">${t.name}</span>
+        <span class="tier-price">+${euro(charged)} <small>/persona</small></span>
+      </div>
+      <p class="tier-tag">${t.tagline}</p>
+      <ul class="tier-items">${t.items.map((i) => `<li>${i}</li>`).join("")}</ul>
+      ${t.valuePerPerson ? `<p class="tier-value">Reservado por tu cuenta ≈ <b>${euro(t.valuePerPerson)}</b>/persona · <span class="tier-save">ahorras ${euro(t.valuePerPerson - charged)}</span></p>` : ""}`;
+    wrap.appendChild(el);
+  });
+
+  $$("#tiers .tier").forEach((el) => el.addEventListener("click", () => {
+    state.selectedTier = el.dataset.tier;
+    renderTiers(); renderCalendar(); updateSummary(); refreshPrice();
+  }));
+}
+
+function currentTier() {
+  if (state.selectedTier === "none") return { perPersonCost: 0 };
+  return state.quote.tiers.find((t) => t.id === state.selectedTier) || { perPersonCost: 0 };
+}
+
+/* ===================== Motor de precios (idéntico al servidor) ===================== */
+function isWeekend(dateStr) { const d = new Date(dateStr + "T12:00:00").getDay(); return d === 5 || d === 6; }
+function monthIndex(dateStr) { return new Date(dateStr + "T12:00:00").getMonth(); }
+
+function chargedForDestination(dest, dateStr, tier) {
+  const p = state.quote.pricing;
+  const m = monthIndex(dateStr);
+  const season = dest.seasonality[m];
+  const weekend = isWeekend(dateStr) ? 1 + p.weekendPremium : 1;
+  const nights = state.prefs.nights;
+  const travelers = state.prefs.travelers;
+  const rooms = Math.ceil(travelers / p.peoplePerRoom);
+
+  const flight = dest.flightPerPerson * season * weekend * travelers * p.markups.flight;
+  const hotel = dest.hotelPerNight * season * nights * rooms * p.markups.hotel;
+  const transfer = dest.transferCost * travelers * p.markups.transfer;
+  const activity = (tier.pricePerPerson ?? (tier.perPersonCost || 0)) * travelers;
+  return flight + hotel + transfer + activity;
+}
+
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+function surpriseCharged(dateStr, tier) {
+  const list = activeDestinations().map((d) => chargedForDestination(d, dateStr, tier));
+  // total redondeado SIEMPRE hacia arriba al múltiplo de 10 más cercano
+  return roundUpTo(median(list), 10);
+}
+
+/* ===================== Calendario ===================== */
+function fmt(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function startMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
+function minDate() { const d = new Date(); d.setDate(d.getDate() + 10); return d; }
+
+function renderCalendar() {
+  const grid = $("#calGrid");
+  grid.innerHTML = "";
+  const month = state.calMonth;
+  $("#calMonth").textContent = month.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+
+  // El calendario muestra SIEMPRE el precio base "vuelo + hotel" (sin actividades).
+  // El nivel de experiencia se elige en el paso 3 y se suma en el resumen/total.
+  const tier = { perPersonCost: 0, pricePerPerson: 0 };
+  const min = minDate(); min.setHours(0, 0, 0, 0);
+  const first = new Date(month.getFullYear(), month.getMonth(), 1);
+  const offset = (first.getDay() + 6) % 7; // lunes primero
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+
+  for (let i = 0; i < offset; i++) {
+    const e = document.createElement("div"); e.className = "cal-cell empty"; grid.appendChild(e);
+  }
+
+  // Precios del mes para clasificar low/mid/high
+  const monthPrices = [];
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(month.getFullYear(), month.getMonth(), day);
+    if (date >= min) monthPrices.push(surpriseCharged(fmt(date), tier) / state.prefs.travelers);
+  }
+  monthPrices.sort((a, b) => a - b);
+  const q1 = monthPrices[Math.floor(monthPrices.length * 0.33)] || 0;
+  const q2 = monthPrices[Math.floor(monthPrices.length * 0.66)] || 0;
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(month.getFullYear(), month.getMonth(), day);
+    const ds = fmt(date);
+    const cell = document.createElement("button");
+    cell.type = "button";
+    if (date < min) {
+      cell.className = "cal-cell disabled";
+      cell.innerHTML = `<span class="cal-day">${day}</span>`;
+    } else {
+      const per = surpriseCharged(ds, tier) / state.prefs.travelers;
+      const level = per <= q1 ? "low" : per <= q2 ? "mid" : "high";
+      cell.className = `cal-cell avail ${level}` + (state.selectedDate === ds ? " selected" : "");
+      cell.innerHTML = `<span class="cal-day">${day}</span><span class="cal-price">${euro(roundUpTo(per, 5))}</span>`;
+      cell.addEventListener("click", () => {
+        state.selectedDate = ds;
+        renderCalendar(); updateSummary(); refreshPrice();
+      });
+    }
+    grid.appendChild(cell);
+  }
+}
+
+$("#calPrev").addEventListener("click", () => {
+  const m = new Date(state.calMonth); m.setMonth(m.getMonth() - 1);
+  if (m >= startMonth(minDate())) { state.calMonth = m; renderCalendar(); }
+});
+$("#calNext").addEventListener("click", () => {
+  const m = new Date(state.calMonth); m.setMonth(m.getMonth() + 1);
+  const limit = startMonth(minDate()); limit.setMonth(limit.getMonth() + 11);
+  if (m <= limit) { state.calMonth = m; renderCalendar(); }
+});
+
+/* ===================== Resumen ===================== */
+function updateSummary() {
+  const bar = $("#summaryBar");
+  bar.hidden = false;
+  const tier = currentTier();
+  const tierName = state.selectedTier === "none" ? "Solo vuelo + hotel"
+    : state.quote.tiers.find((t) => t.id === state.selectedTier).name;
+
+  if (!state.selectedDate) {
+    $("#summaryLine").textContent = `${state.prefs.travelers} viajeros · ${state.prefs.nights + 1} días · ${tierName}`;
+    $("#summaryTotal").textContent = "Elige fecha";
+    $("#summaryPer").textContent = "";
+    updateResultNav();
+    return;
+  }
+  const fee = discardFeeTotal();
+  const total = surpriseCharged(state.selectedDate, tier) + fee;
+  const per = roundUpTo(total / state.prefs.travelers, 5);
+  const d = new Date(state.selectedDate + "T12:00:00");
+  const dateLabel = d.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "long" });
+  const feeNote = fee > 0 ? ` · cambio de destino +${euro(fee)}` : "";
+  $("#summaryLine").textContent = `${dateLabel} · ${state.prefs.travelers} viajeros · ${tierName}${feeNote}`;
+  $("#summaryTotal").textContent = euro(total);
+  $("#summaryPer").textContent = `· ${euro(per)}/persona`;
+  updateResultNav();
+}
+
+// Recalcula el precio EN FIRME para la fecha elegida (vuelo + hotel reales si
+// hay Amadeus). Muestra primero la estimación del calendario y la sustituye por
+// el precio definitivo cuando llega del servidor (puede variar ligeramente).
+async function refreshPrice() {
+  if (!state.selectedDate) return;
+  const key = priceKey();
+  if (priceCache[key]) { applyLivePrice(priceCache[key]); return; }
+
+  const totalEl = $("#summaryTotal");
+  const perEl = $("#summaryPer");
+  if (totalEl) totalEl.classList.add("is-checking");
+  if (perEl) perEl.textContent = "· comprobando precio…";
+
+  const seq = ++priceReqSeq;
+  try {
+    const res = await fetch("/api/price", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prefs: state.prefs,
+        date: state.selectedDate,
+        tierId: state.selectedTier === "none" ? "none" : state.selectedTier,
+        discards: state.discarded.size,
+        destinations: activeDestinations().map((d) => ({
+          id: d.id, flightPerPerson: d.flightPerPerson,
+          hotelPerNight: d.hotelPerNight, matchReason: d.matchReason,
+        })),
+      }),
+    });
+    const data = await res.json();
+    if (seq !== priceReqSeq) return; // respuesta obsoleta (cambió la selección)
+    if (data.ok) {
+      priceCache[key] = data;
+      applyLivePrice(data);
+    } else {
+      updateSummary();
+    }
+  } catch (err) {
+    console.error(err);
+    if (seq === priceReqSeq) updateSummary();
+  } finally {
+    if (seq === priceReqSeq && totalEl) totalEl.classList.remove("is-checking");
+  }
+}
+
+function applyLivePrice(data) {
+  if (!state.selectedDate) return;
+  const totalEl = $("#summaryTotal");
+  const perEl = $("#summaryPer");
+  if (totalEl) { totalEl.textContent = euro(data.total); totalEl.classList.remove("is-checking"); }
+  if (perEl) {
+    const per = data.perPerson ?? roundUpTo(data.total / state.prefs.travelers, 5);
+    perEl.textContent = `· ${euro(per)}/persona${data.live ? " · precio en firme" : ""}`;
+  }
+}
+
+/* ===================== Checkout ===================== */
+async function checkout() {
+  if (!state.selectedDate) { showResultStep(0); return; }
+  const btn = $("#rNext");
+  btn.disabled = true; btn.textContent = "Reservando…";
+  try {
+    const res = await fetch("/api/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prefs: state.prefs,
+        date: state.selectedDate,
+        tierId: state.selectedTier === "none" ? "none" : state.selectedTier,
+        discards: state.discarded.size,
+        destinations: activeDestinations().map((d) => ({
+          id: d.id, flightPerPerson: d.flightPerPerson,
+          hotelPerNight: d.hotelPerNight, matchReason: d.matchReason,
+        })),
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Error");
+    renderOverlay(data);
+  } catch (err) {
+    alert("No se pudo completar la reserva. Inténtalo de nuevo.");
+    console.error(err);
+  } finally {
+    btn.disabled = false; updateResultNav();
+  }
+}
+
+function stars(n) { return "★".repeat(n) + "☆".repeat(Math.max(0, 5 - n)); }
+
+function renderOverlay(data) {
+  const b = data.booking, f = data.finance;
+  const heroImg = imgSrc(b.destination.image);
+  const gem = b.destination.isHiddenGem
+    ? `<span class="reveal-gem">◈ Joya escondida · ${b.destination.transfer || ""}</span>` : "";
+  const date = new Date(b.date + "T12:00:00").toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const returnDate = new Date(b.returnDate + "T12:00:00").toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
+  const ch = f.breakdown.charged, co = f.breakdown.cost;
+
+  const perPerson = Math.round(f.chargedTotal / b.travelers);
+  const actPer = Math.round((ch.activity || 0) / b.travelers);
+  const isNone = b.tier.id === "none";
+  const actsHtml = isNone
+    ? `<p class="cart-none">Solo vuelo + hotel. Tú decides el plan sobre la marcha.</p>`
+    : `<ul class="cart-acts">${(b.tier.items || []).map((i) => `<li>${i}</li>`).join("")}</ul>`;
+
+  $("#overlayBody").innerHTML = `
+    <div class="reveal-hero" style="background:${gradientFor(b.destination.name)}">
+      ${heroImg ? `<img src="${heroImg}" alt="${b.destination.name}" onerror="this.style.display='none'">` : ""}
+      <div>
+        <p class="reveal-kicker">Tu destino sorpresa sería…</p>
+        <div class="reveal-dest">${b.destination.name}</div>
+        <p class="reveal-sub">${b.destination.region ? b.destination.region + " · " : ""}${b.destination.country}</p>
+      </div>
+      ${gem ? `<div class="reveal-gem-wrap">${gem}</div>` : ""}
+    </div>
+    <div class="reveal-body">
+      <p class="reveal-blurb">${b.destination.blurb || ""}</p>
+
+      <div class="cart-summary">
+        <div class="cart-total">
+          <span class="cart-total-label">Precio total · ${b.travelers} ${b.travelers > 1 ? "viajeros" : "viajero"}</span>
+          <span class="cart-total-value">${euro(f.chargedTotal)}</span>
+          <span class="cart-total-per">${euro(perPerson)} / persona · todo incluido</span>
+        </div>
+        <div class="cart-dates">
+          <div><span>Salida</span><b>${date}</b></div>
+          <div><span>Vuelta</span><b>${returnDate}</b></div>
+          <div><span>Noches</span><b>${b.nights}</b></div>
+        </div>
+      </div>
+
+      <div class="book-grid">
+        <div class="book-box">
+          <h5>✈️ Vuelos · ${b.travelers} pax</h5>
+          <div class="flight-leg">
+            <div><b>${b.flightHotel.outbound.dep}</b> → ${b.flightHotel.outbound.arr}
+              <div class="flight-route">${b.flightHotel.outbound.from} → ${b.flightHotel.outbound.to}</div></div>
+            <div style="text-align:right">${b.flightHotel.outbound.airline}<br><small>${b.flightHotel.outbound.flightNo}</small></div>
+          </div>
+          <div class="flight-leg">
+            <div><b>${b.flightHotel.inbound.dep}</b> → ${b.flightHotel.inbound.arr}
+              <div class="flight-route">${b.flightHotel.inbound.from} → ${b.flightHotel.inbound.to}</div></div>
+            <div style="text-align:right">${b.flightHotel.inbound.airline}<br><small>${b.flightHotel.inbound.flightNo}</small></div>
+          </div>
+          <div class="price-chip">Vuelo para esta fecha · <b>${euro(ch.flight)}</b></div>
+        </div>
+        <div class="book-box">
+          <h5>🏨 Hotel · ${b.nights} noches</h5>
+          <div class="hotel-name">${b.flightHotel.hotel.name}</div>
+          <div class="hotel-meta"><span class="stars">${stars(b.flightHotel.hotel.stars)}</span> · ${b.flightHotel.hotel.neighborhood}</div>
+          <div class="hotel-meta">Valoración ${b.flightHotel.hotel.rating}/10</div>
+          <div class="price-chip">Hotel ${b.nights} noches · <b>${euro(ch.hotel)}</b></div>
+        </div>
+      </div>
+
+      <div class="cart-includes">
+        <div class="cart-includes-head">
+          <h5>🎁 Experiencias incluidas · <b>${b.tier.name}</b></h5>
+          ${isNone ? "" : `<span class="cart-acts-price">+${euro(actPer)} / persona</span>`}
+        </div>
+        ${isNone ? "" : `<p class="cart-acts-hint">Esto es lo que vivirías en ${b.destination.name} (ejemplos para que te hagas una idea):</p>`}
+        ${actsHtml}
+        ${(!isNone && b.tier.valuePerPerson) ? `<p class="tier-value">Reservado por tu cuenta ≈ <b>${euro(b.tier.valuePerPerson)}</b>/persona · <span class="tier-save">ahorras ${euro(b.tier.valuePerPerson - (b.tier.pricePerPerson || 0))}</span></p>` : ""}
+      </div>
+
+      <details class="finance-wrap">
+        <summary>Ver desglose interno (coste y margen)</summary>
+        <div class="finance">
+          <div class="finance-head">🔒 Precio y margen ${f.live ? "en firme" : "estimados"} para estas fechas</div>
+          <div class="fin-row"><span>Precio cobrado al cliente</span><b>${euro(f.chargedTotal)}</b></div>
+          ${f.swapFee ? `<div class="fin-row"><span class="muted">Incluye cambio de destino (${f.discards}º descarte)</span><span class="muted">${euro(f.swapFee)}</span></div>` : ""}
+          <div class="fin-row"><span class="muted">Coste real vuelos</span><span class="muted">${euro(co.flight)}</span></div>
+          <div class="fin-row"><span class="muted">Coste real hotel</span><span class="muted">${euro(co.hotel)}</span></div>
+          <div class="fin-row"><span class="muted">Coste real traslado</span><span class="muted">${euro(co.transfer)}</span></div>
+          <div class="fin-row"><span class="muted">Coste real actividades</span><span class="muted">${euro(co.activity)}</span></div>
+          <div class="fin-row"><span>Coste total proveedor</span><b>${euro(f.costTotal)}</b></div>
+          <div class="fin-row total">
+            <span>Margen estimado</span>
+            <span class="fin-margin">${euro(f.margin)} <span class="fin-pill">${f.marginPct}%</span></span>
+          </div>
+          ${f.activities ? `
+          <div class="fin-acts">
+            <div class="finance-head">🎁 Margen solo de las experiencias · ${b.tier.name}</div>
+            <div class="fin-row"><span>Valor de mercado (reservado suelto)</span><b>${euro(f.activities.valueTotal)}</b></div>
+            <div class="fin-row"><span>Precio que asume el cliente</span><b>${euro(f.activities.priceTotal)}</b></div>
+            <div class="fin-row"><span class="muted">Coste real proveedor</span><span class="muted">${euro(f.activities.costTotal)}</span></div>
+            <div class="fin-row total">
+              <span>Margen actividades</span>
+              <span class="fin-margin">${euro(f.activities.marginTotal)} <span class="fin-pill">${f.activities.marginPct}%</span></span>
+            </div>
+          </div>` : ""}
+          <p class="fin-note">El cálculo usa la fecha elegida, las noches, viajeros, temporada del destino y prima de salida en viernes/sábado. El precio sorpresa cobrado es la mediana de los destinos activos; el margen varía según el destino finalmente asignado.</p>
+        </div>
+      </details>
+
+      <div class="reveal-actions">
+        <button class="btn btn-primary btn-lg" id="overlayConfirm">Confirmar pre-reserva</button>
+        <button class="btn btn-ghost" id="overlayBack">Volver</button>
+      </div>
+    </div>`;
+
+  $("#overlay").hidden = false;
+  document.body.style.overflow = "hidden";
+  $("#overlayBack").addEventListener("click", closeOverlay);
+  $("#overlayConfirm").addEventListener("click", () => {
+    $("#overlayConfirm").textContent = "✓ Pre-reserva registrada";
+    $("#overlayConfirm").disabled = true;
+  });
+}
+
+function closeOverlay() { $("#overlay").hidden = true; document.body.style.overflow = ""; }
+$("#overlayClose").addEventListener("click", closeOverlay);
+$("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeOverlay(); });
+
+/* ===================== Init ===================== */
+showStep(0);

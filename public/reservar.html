@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reservar · Defy</title>
+  <meta name="description" content="Configura tu viaje sorpresa: preferencias, destinos posibles y precios por fecha. Vuelo + hotel calculados para tus días." />
+  <meta name="robots" content="noindex" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://loremflickr.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="booking-page">
+  <!-- TOPBAR -->
+  <header class="app-topbar">
+    <a href="/" class="brand"><span class="brand-mark">◆</span> Defy</a>
+    <div class="app-steps-hint">Configurador de viaje sorpresa</div>
+    <a href="/" class="btn btn-pill btn-ghost">← Volver al inicio</a>
+  </header>
+
+  <!-- HEADER -->
+  <section class="app-header">
+    <div class="app-header-inner reveal">
+      <p class="eyebrow">Configurador</p>
+      <h1 class="section-title">Diseña tu viaje sorpresa</h1>
+      <p class="section-sub">Recogemos tus preferencias y te mostramos destinos posibles con un calendario de precios calculados para cada fecha de salida.</p>
+    </div>
+  </section>
+
+  <!-- BOOKING APP -->
+  <main class="booking-main">
+    <!-- QUIZ -->
+    <div class="quiz card" id="quiz">
+      <div class="quiz-progress"><span id="quizBar"></span></div>
+
+      <!-- Paso 1 -->
+      <div class="quiz-step is-active" data-step="0">
+        <p class="quiz-kicker">Paso 1 de 3</p>
+        <h3 class="quiz-q">¿Desde dónde y con quién?</h3>
+        <div class="field-row">
+          <label class="field">
+            <span>Ciudad de salida</span>
+            <select id="departureCity">
+              <option>Madrid</option><option>Barcelona</option><option>Valencia</option>
+              <option>Sevilla</option><option>Málaga</option><option>Bilbao</option>
+              <option>Palma</option><option>Alicante</option><option>Santiago de Compostela</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Viajeros</span>
+            <div class="stepper">
+              <button type="button" data-step-btn="dec">−</button>
+              <input id="travelers" type="number" min="1" max="8" value="2" readonly />
+              <button type="button" data-step-btn="inc">+</button>
+            </div>
+          </label>
+        </div>
+        <span class="field-label">Duración (escapada corta)</span>
+        <div class="choice-row" id="nightsChoice">
+          <button type="button" class="choice" data-nights="1">2 días<small>1 noche</small></button>
+          <button type="button" class="choice is-selected" data-nights="2">3 días<small>2 noches</small></button>
+          <button type="button" class="choice" data-nights="3">4 días<small>3 noches</small></button>
+          <button type="button" class="choice" data-nights="4">5 días<small>4 noches</small></button>
+          <button type="button" class="choice" data-nights="5">6 días<small>5 noches</small></button>
+          <button type="button" class="choice" data-nights="6">7 días<small>6 noches</small></button>
+        </div>
+      </div>
+
+      <!-- Paso 2 -->
+      <div class="quiz-step" data-step="1">
+        <p class="quiz-kicker">Paso 2 de 3</p>
+        <h3 class="quiz-q">¿Qué te apetece vivir?</h3>
+        <p class="quiz-hint">Elige todo lo que encaje contigo.</p>
+        <div class="chips" id="vibes">
+          <button type="button" class="chip" data-vibe="beach">🏖️ Costa &amp; playa</button>
+          <button type="button" class="chip" data-vibe="culture">🏛️ Ciudad &amp; cultura</button>
+          <button type="button" class="chip" data-vibe="nature">🏔️ Naturaleza &amp; lagos</button>
+          <button type="button" class="chip" data-vibe="food">🍝 Gastronomía</button>
+          <button type="button" class="chip" data-vibe="nightlife">🌙 Fiesta &amp; noche</button>
+          <button type="button" class="chip" data-vibe="romantic">💞 Romántico</button>
+        </div>
+      </div>
+
+      <!-- Paso 3 -->
+      <div class="quiz-step" data-step="2">
+        <p class="quiz-kicker">Paso 3 de 3</p>
+        <h3 class="quiz-q">Clima, ritmo y atrevimiento</h3>
+        <span class="field-label">Clima preferido</span>
+        <div class="choice-row" id="climateChoice">
+          <button type="button" class="choice" data-climate="warm">☀️ Cálido</button>
+          <button type="button" class="choice" data-climate="temperate">🌤️ Templado</button>
+          <button type="button" class="choice" data-climate="cool">❄️ Fresco</button>
+          <button type="button" class="choice is-selected" data-climate="any">🎲 Indiferente</button>
+        </div>
+        <span class="field-label">Ritmo del viaje</span>
+        <div class="choice-row" id="paceChoice">
+          <button type="button" class="choice" data-pace="relax">🧘 Relax total</button>
+          <button type="button" class="choice is-selected" data-pace="balanced">⚖️ Equilibrado</button>
+          <button type="button" class="choice" data-pace="adventure">🧭 Aventura</button>
+        </div>
+
+        <label class="toggle" id="gemsToggle">
+          <input type="checkbox" id="hiddenGems" checked />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-text">
+            <b>Ábreme a joyas escondidas</b>
+            <small>Acepto volar + 1–2 h en coche/tren/ferry para llegar a sitios como Positano o el Lago de Como.</small>
+          </span>
+        </label>
+      </div>
+
+      <div class="quiz-nav">
+        <button type="button" class="btn btn-ghost" id="quizPrev" disabled>Atrás</button>
+        <button type="button" class="btn btn-primary" id="quizNext">Siguiente</button>
+      </div>
+    </div>
+
+    <!-- LOADING -->
+    <div class="planner-loading" id="loading" hidden>
+      <div class="loader-orb"></div>
+      <p id="loadingText">Cruzando destinos, vuelos, hoteles, noches y temporada para tus fechas…</p>
+    </div>
+
+    <!-- RESULTS (3 páginas: calendario · destinos · experiencia) -->
+    <div class="results" id="results" hidden>
+      <div class="results-head">
+        <div>
+          <p class="eyebrow" id="resultSource">Seleccionado para ti</p>
+          <h3 class="results-title">Tu escapada sorpresa</h3>
+        </div>
+        <button class="btn btn-ghost" id="editPrefs">↺ Cambiar preferencias</button>
+      </div>
+
+      <div class="rstepper" id="rstepper">
+        <span class="rstep-pill is-on" data-pill="0"><b>1</b> Fecha</span>
+        <span class="rstep-line"></span>
+        <span class="rstep-pill" data-pill="1"><b>2</b> Destinos</span>
+        <span class="rstep-line"></span>
+        <span class="rstep-pill" data-pill="2"><b>3</b> Experiencia</span>
+      </div>
+
+      <!-- Página 1 · Calendario -->
+      <section class="result-step is-active" data-rstep="0">
+        <div class="calendar-wrap">
+          <div class="calendar-head">
+            <h3 class="results-title">Elige tu fecha de salida</h3>
+            <div class="cal-nav">
+              <button id="calPrev" aria-label="Mes anterior">‹</button>
+              <span id="calMonth"></span>
+              <button id="calNext" aria-label="Mes siguiente">›</button>
+            </div>
+          </div>
+          <div class="cal-weekdays">
+            <span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span>
+          </div>
+          <div class="cal-grid" id="calGrid"></div>
+          <p class="cal-legend"><i class="dot-low"></i> mejor precio &nbsp; <i class="dot-mid"></i> medio &nbsp; <i class="dot-high"></i> alta demanda · precio por persona, vuelo + hotel</p>
+        </div>
+      </section>
+
+      <!-- Página 2 · Destinos -->
+      <section class="result-step" data-rstep="1">
+        <h3 class="results-title">Destinos que pueden tocarte</h3>
+        <p class="results-sub">Puedes descartar hasta <b>2 destinos</b>: el primero gratis y el segundo por <b>10 €/persona</b>. El precio se recalcula con los que sigan activos.</p>
+        <div class="dest-grid" id="destGrid"></div>
+      </section>
+
+      <!-- Página 3 · Experiencia -->
+      <section class="result-step" data-rstep="2">
+        <h3 class="results-title">Nivel de experiencia</h3>
+        <p class="results-sub">Experiencias reales en destino, todas opcionales. Elige el nivel que más te encaje.</p>
+        <div class="tiers" id="tiers"></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- SUMMARY / NAV BAR -->
+  <div class="summary-bar" id="summaryBar" hidden>
+    <button class="btn btn-ghost summary-prev" id="rPrev" disabled>← Atrás</button>
+    <div class="summary-info">
+      <div class="summary-line" id="summaryLine">Elige fecha</div>
+      <div class="summary-price"><span id="summaryTotal">—</span> <small id="summaryPer"></small></div>
+    </div>
+    <button class="btn btn-primary btn-lg" id="rNext" disabled>Siguiente →</button>
+  </div>
+
+  <!-- CHECKOUT OVERLAY -->
+  <div class="overlay" id="overlay" hidden>
+    <div class="overlay-card" id="overlayCard">
+      <button class="overlay-close" id="overlayClose" aria-label="Cerrar">✕</button>
+      <div id="overlayBody"></div>
+    </div>
+  </div>
+
+  <script src="/reservar.js"></script>
+</body>
+</html>
