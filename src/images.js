@@ -14,7 +14,7 @@ const unsplashCache = new Map();
 const wikiCache = new Map();
 
 // fetch con timeout para no bloquear la petición si la fuente tarda.
-async function fetchJSON(url, { timeoutMs = 6000, headers = {} } = {}) {
+async function fetchJSON(url, { timeoutMs = 4500, headers = {} } = {}) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -83,9 +83,8 @@ export async function resolveImageUrl(image, hint, wiki) {
     const w = await wikipediaImage(wikiTitle);
     if (w) return w;
   }
-  // 3) Imagen local curada, si el proyecto la tuviera.
-  if (image?.kind === "local" && image.path) return image.path;
-  // 4) Último recurso: LoremFlickr por palabra clave.
-  if (image?.query) return flickrUrl(image.query, image.lock ?? 1);
-  return image?.path || null;
+  // Sin fuente externa disponible: el servidor usará un placeholder local
+  // (SVG generado por la app) que SIEMPRE carga, también en redes que bloquean
+  // CDNs externos. Devolvemos null para que el llamador aplique ese respaldo.
+  return null;
 }

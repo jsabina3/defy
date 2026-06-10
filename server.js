@@ -314,12 +314,25 @@ async function enrichPrices(picks, prefs) {
   );
 }
 
-// Resuelve la mejor URL de imagen (local > Unsplash > LoremFlickr) por destino.
+// URL del placeholder local (SVG generado por la app). SIEMPRE carga, también en
+// redes que bloquean CDNs externos (el navegador lo pide al propio servidor).
+function sceneKindFor(d) {
+  const t = d.tags || [];
+  if (t.includes("beach")) return "beach";
+  if (d.season === "alpine" || d.season === "nature" || t.includes("nature")) return "nature";
+  return "city";
+}
+function placeholderFor(d) {
+  return `/api/destimg?name=${encodeURIComponent(d.name)}&kind=${sceneKindFor(d)}`;
+}
+
+// Resuelve la mejor URL de imagen (Unsplash > Wikipedia > local) por destino y,
+// si no hay foto externa disponible, cae en el placeholder local garantizado.
 async function attachImages(destinations) {
   await Promise.allSettled(
     destinations.map(async (d) => {
       const url = await resolveImageUrl(d.image, `${d.name} ${d.country}`, WIKI_BY_ID[d.id]);
-      d.image = { url };
+      d.image = { url: url || placeholderFor(d) };
     })
   );
 }
@@ -580,7 +593,7 @@ app.post("/api/checkout", async (req, res) => {
       aiFlightHotel(best.dest, prefs, dateStr),
       tier.id === "none" ? Promise.resolve(tier.items) : aiActivities(best.dest, tier),
     ]);
-    const heroImage = await resolveImageUrl(best.dest.image, `${best.dest.name} ${best.dest.country}`, WIKI_BY_ID[best.dest.id]);
+    const heroImage = (await resolveImageUrl(best.dest.image, `${best.dest.name} ${best.dest.country}`, WIKI_BY_ID[best.dest.id])) || placeholderFor(best.dest);
     const costTotal = best.price.cost + actCostPP * travelers;
     const margin = chargedTotal - costTotal;
     const marginPct = chargedTotal > 0 ? margin / chargedTotal : 0;
@@ -715,6 +728,63 @@ function normalizePrefs(p) {
     discarded: Array.isArray(p.discarded) ? p.discarded.slice(0, 30) : [],
   };
 }
+
+// Placeholder de destino generado en el servidor: una ILUSTRACIÓN tipo postal
+// (playa / montaña / ciudad según el destino), determinista (mismo nombre =>
+// mismos colores). No lleva el nombre dentro (la tarjeta ya lo superpone). Se
+// sirve localmente, así que carga siempre aunque la red bloquee CDNs externos.
+function destImgSvg(name = "Destino", kind = "city") {
+  let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+  const a = Math.abs(h) % 360, b = (Math.abs(h) >> 3) % 360;
+  const c1 = `hsl(${a} 62% 48%)`, c2 = `hsl(${b} 64% 15%)`, sun = `hsl(${(a + 28) % 360} 92% 72%)`;
+  const dark = "rgba(0,0,0,0.24)", mid = "rgba(0,0,0,0.15)", snow = "rgba(255,255,255,0.85)";
+
+  let scene;
+  if (kind === "beach") {
+    scene = `
+    <circle cx="930" cy="235" r="98" fill="${sun}" opacity="0.92"/>
+    <circle cx="930" cy="235" r="150" fill="${sun}" opacity="0.16"/>
+    <path d="M0 560 Q 300 520 600 558 T 1200 556 L1200 800 0 800 Z" fill="${mid}"/>
+    <path d="M0 642 Q 300 602 600 642 T 1200 640 L1200 800 0 800 Z" fill="${dark}"/>
+    <path d="M0 720 Q 300 686 600 720 T 1200 718 L1200 800 0 800 Z" fill="rgba(255,255,255,0.10)"/>`;
+  } else if (kind === "nature") {
+    scene = `
+    <circle cx="955" cy="205" r="80" fill="${sun}" opacity="0.88"/>
+    <polygon points="90,800 470,360 850,800" fill="${dark}"/>
+    <polygon points="470,360 528,432 412,432" fill="${snow}"/>
+    <polygon points="520,800 905,415 1290,800" fill="${mid}"/>
+    <polygon points="905,415 962,488 848,488" fill="${snow}"/>`;
+  } else {
+    scene = `
+    <circle cx="955" cy="205" r="78" fill="${sun}" opacity="0.88"/>
+    <g fill="${dark}">
+      <rect x="110" y="520" width="92" height="280"/><rect x="222" y="448" width="80" height="352"/>
+      <rect x="322" y="560" width="70" height="240"/><rect x="412" y="398" width="96" height="402"/>
+      <rect x="528" y="500" width="80" height="300"/><rect x="628" y="560" width="72" height="240"/>
+    </g>
+    <g fill="${mid}">
+      <rect x="724" y="470" width="92" height="330"/><rect x="836" y="540" width="76" height="260"/>
+      <rect x="932" y="430" width="100" height="370"/><rect x="1052" y="520" width="86" height="280"/>
+    </g>`;
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/>
+  </linearGradient></defs>
+  <rect width="1200" height="800" fill="url(#g)"/>
+  ${scene}
+  <text x="80" y="110" fill="#fff" opacity="0.55" font-family="Georgia,'Times New Roman',serif" font-size="24" letter-spacing="7">INCÓGNITO</text>
+</svg>`;
+}
+const SCENE_KINDS = new Set(["beach", "nature", "city"]);
+app.get("/api/destimg", (req, res) => {
+  const name = String(req.query.name || "Destino").slice(0, 40);
+  const kind = SCENE_KINDS.has(req.query.kind) ? req.query.kind : "city";
+  res.set("Content-Type", "image/svg+xml; charset=utf-8");
+  res.set("Cache-Control", "public, max-age=86400");
+  res.send(destImgSvg(name, kind));
+});
 
 app.get("/api/health", (_req, res) => res.json({
   ok: true,
