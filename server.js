@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CATALOG, CATALOG_BY_ID, SEASONS, PRICING, TIERS, STAY_TIERS, stayTierFactor } from "./src/catalog.js";
+import { CATALOG, CATALOG_BY_ID, WIKI_BY_ID, SEASONS, PRICING, TIERS, STAY_TIERS, stayTierFactor } from "./src/catalog.js";
 import { amadeusEnabled, cheapestFlightPP, cheapestHotelNight } from "./src/amadeus.js";
 import { unsplashEnabled, resolveImageUrl } from "./src/images.js";
 
@@ -95,13 +95,33 @@ function referenceCharged(dest, prefs, stayFactor) {
   return flight + hotel + transfer;
 }
 
-// Selecciona SIEMPRE N destinos (por defecto 10), priorizando el encaje con las
-// vibes ordenadas y manteniéndolos dentro de una banda de precio parecida para
-// que no haya destinos mucho más baratos que otros.
+// ¿El destino encaja con alguno de los intereses marcados? Sin intereses, todo
+// encaja. Con intereses, el destino DEBE compartir al menos uno de sus tags.
+function matchesVibes(dest, vibes) {
+  if (!vibes || !vibes.length) return true;
+  return vibes.some((v) => dest.tags.includes(v));
+}
+// ¿Encaja con el clima pedido? "any" no filtra. Permitimos adyacencias suaves
+// (templado sirve para quien pide cálido o fresco) para no excluir de más.
+function matchesClimate(dest, climate) {
+  if (!climate || climate === "any") return true;
+  if (dest.climate === climate) return true;
+  if (dest.climate === "temperate" && (climate === "warm" || climate === "cool")) return true;
+  return false;
+}
+
+// Selecciona SIEMPRE N destinos (por defecto 10). Los destinos DEBEN encajar con
+// las preferencias del viajero: trabajamos por capas de exigencia, de la más
+// estricta a la más laxa, y solo bajamos de capa cuando no hay suficientes
+// destinos que cumplan (es decir, cuando las preferencias son incompatibles
+// entre sí). Dentro de cada capa priorizamos una banda de precio comparable
+// para que no haya destinos mucho más baratos que otros.
 function selectDestinations(prefs, n = PRICING.destinationsShown) {
   const discarded = new Set(prefs.discarded || []);
   const origin = originCountryOf(prefs.departureCity);
   const stayFactor = stayTierFactor(prefs.stayTier);
+  const vibes = prefs.vibes || [];
+  const topVibe = vibes[0];
 
   const pool = CATALOG
     .filter((d) => !discarded.has(d.id))
@@ -112,22 +132,52 @@ function selectDestinations(prefs, n = PRICING.destinationsShown) {
     .map((d) => ({ d, s: scoreDestination(d, prefs), ref: referenceCharged(d, prefs, stayFactor) }))
     .sort((a, b) => b.s - a.s);
 
-  // Banda de precio alrededor de la mediana de referencia del pool.
-  const med = percentile(scored.map((x) => x.ref), 0.5) || 0;
-  const lo = med * PRICING.bandLow;
-  const hi = med * PRICING.bandHigh;
+  // Capas que SÍ encajan con las preferencias, de la más estricta a la más laxa:
+  //  1) Interés PRINCIPAL (1ª prioridad) + clima.
+  //  2) Cualquier interés marcado + clima.
+  //  3) Cualquier interés marcado (clima relajado, p. ej. playa en clima fresco).
+  // Todas exigen compartir al menos un interés: ningún destino de estas capas
+  // "no matchea". Solo si entre las tres no llegamos al mínimo (preferencias muy
+  // estrechas o incompatibles) recurrimos al comodín de relleno más abajo.
+  const matchLayers = [
+    scored.filter((x) => (!topVibe || x.d.tags.includes(topVibe)) && matchesClimate(x.d, prefs.climate)),
+    scored.filter((x) => matchesVibes(x.d, vibes) && matchesClimate(x.d, prefs.climate)),
+    scored.filter((x) => matchesVibes(x.d, vibes)),
+  ];
 
-  const inBand = scored.filter((x) => x.ref >= lo && x.ref <= hi);
-  const chosen = inBand.slice(0, n);
-  // Si la banda deja menos de N, completamos con los mejores restantes.
-  if (chosen.length < n) {
-    const ids = new Set(chosen.map((x) => x.d.id));
-    for (const x of scored) {
-      if (chosen.length >= n) break;
-      if (!ids.has(x.d.id)) { chosen.push(x); ids.add(x.d.id); }
+  const chosen = [];
+  const ids = new Set();
+  const add = (x) => { if (!ids.has(x.d.id)) { chosen.push(x); ids.add(x.d.id); } };
+  const fill = (layer, cap) => {
+    if (!layer.length) return;
+    // Dentro de la capa, primero los que caen en la banda de precio comparable.
+    const med = percentile(layer.map((x) => x.ref), 0.5) || 0;
+    const lo = med * PRICING.bandLow;
+    const hi = med * PRICING.bandHigh;
+    for (const x of layer.filter((x) => x.ref >= lo && x.ref <= hi)) {
+      if (chosen.length >= cap) break;
+      add(x);
     }
+    for (const x of layer) {
+      if (chosen.length >= cap) break;
+      add(x);
+    }
+  };
+
+  // Mostramos TODOS los destinos que encajan (hasta el tope), sin rellenar con
+  // destinos que no encajen.
+  for (const layer of matchLayers) {
+    if (chosen.length >= n) break;
+    fill(layer, n);
   }
-  return chosen.map(({ d }) => ({ id: d.id, matchReason: null, flightPerPerson: null, hotelPerNight: null }));
+
+  // Suelo de seguridad: si las preferencias dejan muy pocos destinos válidos,
+  // completamos con los mejores aunque no encajen, para que la experiencia
+  // (calendario, precio sorpresa, descartes) siga funcionando.
+  const min = Math.min(PRICING.destinationsMin || 0, scored.length);
+  if (chosen.length < min) fill(scored, min);
+
+  return chosen.slice(0, n).map(({ d }) => ({ id: d.id, matchReason: null, flightPerPerson: null, hotelPerNight: null }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -268,7 +318,7 @@ async function enrichPrices(picks, prefs) {
 async function attachImages(destinations) {
   await Promise.allSettled(
     destinations.map(async (d) => {
-      const url = await resolveImageUrl(d.image, `${d.name} ${d.country}`);
+      const url = await resolveImageUrl(d.image, `${d.name} ${d.country}`, WIKI_BY_ID[d.id]);
       d.image = { url };
     })
   );
@@ -530,7 +580,7 @@ app.post("/api/checkout", async (req, res) => {
       aiFlightHotel(best.dest, prefs, dateStr),
       tier.id === "none" ? Promise.resolve(tier.items) : aiActivities(best.dest, tier),
     ]);
-    const heroImage = await resolveImageUrl(best.dest.image, `${best.dest.name} ${best.dest.country}`);
+    const heroImage = await resolveImageUrl(best.dest.image, `${best.dest.name} ${best.dest.country}`, WIKI_BY_ID[best.dest.id]);
     const costTotal = best.price.cost + actCostPP * travelers;
     const margin = chargedTotal - costTotal;
     const marginPct = chargedTotal > 0 ? margin / chargedTotal : 0;

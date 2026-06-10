@@ -27,7 +27,10 @@ export const PRICING = {
   anchorPercentile: 0.45, // ligeramente por debajo de la mediana => precio competitivo, con margen al asignar el destino más barato
   bandLow: 0.72,         // ningún destino por debajo del 72 % de la mediana del pool
   bandHigh: 1.42,        // ni por encima del 142 %
-  destinationsShown: 10, // siempre 10 destinos, sea cual sea la combinación
+  destinationsShown: 10, // tope de destinos a mostrar cuando hay encaje de sobra
+  destinationsMin: 5,    // suelo: si las preferencias encajan con MENOS de estos,
+                         // completamos con los mejores aunque no encajen del todo
+                         // (preferencias muy estrechas / incompatibles entre sí)
 };
 
 // Niveles de viaje (destino + alojamiento). Es lo que separa "una villa en el
@@ -493,6 +496,36 @@ export const CATALOG = [
 ];
 
 export const CATALOG_BY_ID = Object.fromEntries(CATALOG.map((d) => [d.id, d]));
+
+// Título del artículo de Wikipedia (en inglés) por destino. Es la fuente de
+// imágenes por defecto (sin clave): la foto principal del artículo del lugar.
+export const WIKI_BY_ID = {
+  positano: "Positano",
+  como: "Lake Como",
+  santorini: "Santorini",
+  paris: "Paris",
+  rome: "Rome",
+  cinqueterre: "Cinque Terre",
+  bled: "Lake Bled",
+  hallstatt: "Hallstatt",
+  sintra: "Sintra",
+  lisboa: "Lisbon",
+  porto: "Porto",
+  florencia: "Florence",
+  annecy: "Annecy",
+  ronda: "Ronda",
+  marrakech: "Marrakesh",
+  budapest: "Budapest",
+  dubrovnik: "Dubrovnik",
+  madeira: "Madeira",
+  azores: "Azores",
+  dolomitas: "Dolomites",
+  copenhague: "Copenhagen",
+  capadocia: "Cappadocia",
+  provenza: "Provence",
+  lofoten: "Lofoten",
+  sevilla: "Seville",
+};
 
 // IATA de aeropuertos por ciudad (salidas españolas + gateways del catálogo).
 // Se usa para consultar precios reales en Amadeus. Las claves van sin acentos.
