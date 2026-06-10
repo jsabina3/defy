@@ -5,11 +5,14 @@ import { fileURLToPath } from "node:url";
 import { CATALOG, CATALOG_BY_ID, SEASONS, PRICING, TIERS, STAY_TIERS, stayTierFactor } from "./src/catalog.js";
 import { amadeusEnabled, cheapestFlightPP, cheapestHotelNight } from "./src/amadeus.js";
 import { unsplashEnabled } from "./src/images.js";
-import { imageGenEnabled, ensureImage, cachedGeneratedUrl } from "./src/imagegen.js";
+import { imageGenEnabled, ensureImage, cachedGeneratedUrl, genDir, imageStoreInfo, initImageStore } from "./src/imagegen.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json({ limit: "1mb" }));
+// Caché de fotos IA (local o Railway Volume). Va antes que public/ para que el
+// volumen persistente tenga prioridad sobre el disco efímero del contenedor.
+app.use("/assets/gen", express.static(genDir, { maxAge: "7d", immutable: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = process.env.PORT || 3000;
@@ -819,6 +822,7 @@ app.get("/api/health", (_req, res) => res.json({
   amadeus: amadeusEnabled(),
   unsplash: unsplashEnabled(),
   imagegen: imageGenEnabled(),
+  imageStore: imageStoreInfo(),
 }));
 
 // Página de reserva (URL limpia) servida como página independiente
@@ -826,10 +830,17 @@ app.get("/reservar", (_req, res) => res.sendFile(path.join(__dirname, "public", 
 
 app.get("*", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
-app.listen(PORT, () => {
-  const flag = (on) => (on ? "activa" : "off");
-  console.log(
-    `Incógnito en http://localhost:${PORT}  ` +
-    `(IA: ${flag(!!OPENAI_API_KEY)} · Amadeus: ${flag(amadeusEnabled())} · Imágenes IA: ${flag(imageGenEnabled())})`
-  );
+initImageStore().then(() => {
+  app.listen(PORT, () => {
+    const flag = (on) => (on ? "activa" : "off");
+    const store = imageStoreInfo();
+    console.log(
+      `Incógnito en http://localhost:${PORT}  ` +
+      `(IA: ${flag(!!OPENAI_API_KEY)} · Amadeus: ${flag(amadeusEnabled())} · Imágenes IA: ${flag(imageGenEnabled())}` +
+      `${store.persistent ? " · caché persistente" : ""})`
+    );
+  });
+}).catch((err) => {
+  console.error("No se pudo inicializar la caché de imágenes:", err);
+  process.exit(1);
 });

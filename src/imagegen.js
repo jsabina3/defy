@@ -5,9 +5,16 @@
 // pero ~80 % más barato. Para tarjetas de viaje en landscape (1536x1024):
 //   low ≈ $0.006 · medium ≈ $0.015 · high ≈ $0.052 por imagen.
 //
-// El catálogo es FIJO, así que cada destino se genera UNA sola vez y se guarda en
-// public/assets/gen/<id>.png. A partir de ahí se sirve en local (gratis e
-// instantáneo, también en redes que bloquean internet salvo la API de OpenAI).
+// El catálogo es FIJO: cada destino se genera UNA vez y se guarda como
+// <id>.png. A partir de ahí se sirve en local (gratis e instantáneo).
+//
+// Railway (persistencia entre deploys):
+//   1) En el dashboard: Service → Volumes → Add Volume.
+//   2) Mount path recomendado: /app/public/assets/gen
+//      (Railway inyecta RAILWAY_VOLUME_MOUNT_PATH con esa ruta en runtime).
+//   3) No montes en /app (borra el código). Cualquier subcarpeta de /app vale.
+//   Alternativa: monta en /app/data/img-gen y define IMAGE_GEN_DIR igual.
+//   Si el contenedor corre como no-root y falla al escribir: RAILWAY_RUN_UID=0.
 
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -15,22 +22,36 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const GEN_DIR = path.join(__dirname, "..", "public", "assets", "gen");
+const DEFAULT_GEN_DIR = path.join(__dirname, "..", "public", "assets", "gen");
+
+function resolveGenDir() {
+  if (process.env.IMAGE_GEN_DIR) return path.resolve(process.env.IMAGE_GEN_DIR);
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) return path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH);
+  return DEFAULT_GEN_DIR;
+}
+
+export const genDir = resolveGenDir();
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const IMAGE_MODEL = process.env.IMAGE_MODEL || "gpt-image-1-mini";
-// Calidad/medida configurables. "low" es el óptimo coste/rendimiento.
-const IMAGE_QUALITY = process.env.IMAGE_QUALITY || "low"; // low | medium | high
-const IMAGE_SIZE = process.env.IMAGE_SIZE || "1536x1024"; // landscape
+const IMAGE_QUALITY = process.env.IMAGE_QUALITY || "low";
+const IMAGE_SIZE = process.env.IMAGE_SIZE || "1536x1024";
 
 export const imageGenEnabled = () => !!OPENAI_API_KEY;
 
-try { fs.mkdirSync(GEN_DIR, { recursive: true }); } catch { /* noop */ }
+export function imageStoreInfo() {
+  const onVolume = !!(process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.IMAGE_GEN_DIR);
+  return {
+    dir: genDir,
+    persistent: onVolume,
+    railwayVolume: process.env.RAILWAY_VOLUME_MOUNT_PATH || null,
+    volumeName: process.env.RAILWAY_VOLUME_NAME || null,
+  };
+}
 
-const fileFor = (id) => path.join(GEN_DIR, `${id}.png`);
+const fileFor = (id) => path.join(genDir, `${id}.png`);
 const publicUrlFor = (id) => `/assets/gen/${id}.png`;
 
-// URL pública de la imagen ya generada y cacheada, o null si aún no existe.
 export function cachedGeneratedUrl(id) {
   if (!id) return null;
   try {
@@ -40,8 +61,38 @@ export function cachedGeneratedUrl(id) {
   }
 }
 
-// Limitador de concurrencia: evita golpear los límites de la API generando
-// demasiadas imágenes a la vez.
+// Si antes se generaron imágenes en el disco efímero (public/assets/gen) y ahora
+// hay volumen, copiamos las que falten para no regenerarlas ni pagar de nuevo.
+async function migrateFromDefaultIfNeeded() {
+  if (path.resolve(genDir) === path.resolve(DEFAULT_GEN_DIR)) return;
+  try {
+    if (!fs.existsSync(DEFAULT_GEN_DIR)) return;
+    const files = await fsp.readdir(DEFAULT_GEN_DIR);
+    let copied = 0;
+    for (const f of files) {
+      if (!f.endsWith(".png")) continue;
+      const dest = path.join(genDir, f);
+      if (!fs.existsSync(dest)) {
+        await fsp.copyFile(path.join(DEFAULT_GEN_DIR, f), dest);
+        copied++;
+      }
+    }
+    if (copied) console.log(`Image cache: migradas ${copied} imágenes al volumen persistente`);
+  } catch (err) {
+    console.warn("Image cache migration skipped:", err.message);
+  }
+}
+
+export async function initImageStore() {
+  await fsp.mkdir(genDir, { recursive: true });
+  await migrateFromDefaultIfNeeded();
+  const info = imageStoreInfo();
+  const tag = info.railwayVolume
+    ? `Railway volume${info.volumeName ? ` "${info.volumeName}"` : ""}`
+    : info.persistent ? "IMAGE_GEN_DIR" : "disco local (efímero en PaaS)";
+  console.log(`Image cache: ${info.dir} (${tag})`);
+}
+
 const MAX_CONCURRENT = Number(process.env.IMAGE_CONCURRENCY) || 4;
 let active = 0;
 const queue = [];
@@ -61,7 +112,6 @@ function pump() {
     .finally(() => { active--; pump(); });
 }
 
-// Prompt para una fotografía de viaje realista y sin texto.
 function buildPrompt(dest) {
   const place = [dest.name, dest.region, dest.country].filter(Boolean).join(", ");
   const flavor = dest.blurb ? ` ${dest.blurb}` : "";
@@ -107,12 +157,8 @@ async function callOpenAIImage(prompt) {
   }
 }
 
-// Evita generar dos veces el mismo destino en paralelo.
 const inflight = new Map();
 
-// Garantiza que exista la imagen del destino. Devuelve su URL pública o null.
-// Si ya está cacheada en disco, no llama a la API. La generación es idempotente
-// y segura ante llamadas concurrentes.
 export function ensureImage(dest) {
   if (!dest || !dest.id) return Promise.resolve(null);
   const cached = cachedGeneratedUrl(dest.id);
@@ -121,13 +167,13 @@ export function ensureImage(dest) {
   if (inflight.has(dest.id)) return inflight.get(dest.id);
 
   const job = schedule(async () => {
-    // Re-chequeo por si se generó mientras esperaba en la cola.
     if (fs.existsSync(fileFor(dest.id))) return publicUrlFor(dest.id);
     const buf = await callOpenAIImage(buildPrompt(dest));
     if (!buf) return null;
+    await fsp.mkdir(genDir, { recursive: true });
     const tmp = fileFor(dest.id) + ".tmp";
     await fsp.writeFile(tmp, buf);
-    await fsp.rename(tmp, fileFor(dest.id)); // publicación atómica
+    await fsp.rename(tmp, fileFor(dest.id));
     return publicUrlFor(dest.id);
   }).finally(() => inflight.delete(dest.id));
 
