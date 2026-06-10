@@ -245,7 +245,7 @@ function renderDestinations() {
     el.style.background = gradientFor(d.name);
 
     const src = imgSrc(d.image);
-    const img = src ? `<img class="dest-bg" src="${src}" alt="${d.name}" loading="lazy"
+    const img = src ? `<img class="dest-bg" data-id="${d.id}" src="${src}" alt="${d.name}" loading="lazy"
       onerror="this.style.display='none'">` : "";
     const gem = d.isHiddenGem ? `<span class="dest-badge">◈ Joya escondida</span>` : "";
     const transfer = d.transfer ? `<div class="dest-transfer">🚆 ${d.transfer}</div>` : "";
@@ -270,6 +270,8 @@ function renderDestinations() {
     grid.appendChild(el);
   });
 
+  pollGeneratedImages();
+
   $$(".dest-discard").forEach((b) => b.addEventListener("click", () => {
     const id = b.dataset.id;
     if (state.discarded.has(id)) {
@@ -288,6 +290,40 @@ function renderDestinations() {
 
 function activeDestinations() {
   return state.quote.destinations.filter((d) => !state.discarded.has(d.id));
+}
+
+/* Mejora progresiva de imágenes: las tarjetas muestran al instante un placeholder
+   ilustrado; mientras, el servidor genera la foto real con IA. Aquí preguntamos
+   periódicamente qué fotos ya están listas y sustituimos el placeholder. */
+let imgPollTimer = null;
+function pollGeneratedImages() {
+  clearTimeout(imgPollTimer);
+  if (!state.quote || !state.quote.destinations) return;
+  const allIds = state.quote.destinations.map((d) => d.id);
+  let tries = 0;
+  const tick = async () => {
+    tries += 1;
+    const pending = allIds.filter(
+      (id) => !document.querySelector(`.dest-bg[data-id="${id}"][data-generated="1"]`)
+    );
+    if (!pending.length || tries > 40) return; // ~2 min máx.
+    try {
+      const res = await fetch(`/api/destimg/status?ids=${encodeURIComponent(pending.join(","))}`);
+      const data = await res.json();
+      if (data.ok) {
+        Object.entries(data.ready).forEach(([id, url]) => {
+          document.querySelectorAll(`.dest-bg[data-id="${id}"]`).forEach((img) => {
+            if (img.dataset.generated === "1") return;
+            img.dataset.generated = "1";
+            img.src = `${url}?v=${Date.now()}`;
+            img.style.display = "";
+          });
+        });
+      }
+    } catch (e) { /* reintentamos en el siguiente tick */ }
+    imgPollTimer = setTimeout(tick, 3500);
+  };
+  imgPollTimer = setTimeout(tick, 2500);
 }
 
 /* ===================== Tiers ===================== */

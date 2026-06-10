@@ -2,9 +2,10 @@ import "dotenv/config";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CATALOG, CATALOG_BY_ID, WIKI_BY_ID, SEASONS, PRICING, TIERS, STAY_TIERS, stayTierFactor } from "./src/catalog.js";
+import { CATALOG, CATALOG_BY_ID, SEASONS, PRICING, TIERS, STAY_TIERS, stayTierFactor } from "./src/catalog.js";
 import { amadeusEnabled, cheapestFlightPP, cheapestHotelNight } from "./src/amadeus.js";
-import { unsplashEnabled, resolveImageUrl } from "./src/images.js";
+import { unsplashEnabled } from "./src/images.js";
+import { imageGenEnabled, ensureImage, cachedGeneratedUrl } from "./src/imagegen.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -322,19 +323,19 @@ function sceneKindFor(d) {
   if (d.season === "alpine" || d.season === "nature" || t.includes("nature")) return "nature";
   return "city";
 }
-function placeholderFor(d) {
-  return `/api/destimg?name=${encodeURIComponent(d.name)}&kind=${sceneKindFor(d)}`;
-}
 
-// Resuelve la mejor URL de imagen (Unsplash > Wikipedia > local) por destino y,
-// si no hay foto externa disponible, cae en el placeholder local garantizado.
-async function attachImages(destinations) {
-  await Promise.allSettled(
-    destinations.map(async (d) => {
-      const url = await resolveImageUrl(d.image, `${d.name} ${d.country}`, WIKI_BY_ID[d.id]);
-      d.image = { url: url || placeholderFor(d) };
-    })
-  );
+// Asigna la imagen de cada destino. Si ya hay una foto generada por IA en caché,
+// se usa directamente; si no, se apunta al endpoint inteligente /api/destimg
+// (que sirve el placeholder ilustrado al instante y dispara la generación con
+// OpenAI en segundo plano). El front luego sustituye el placeholder por la foto
+// real cuando esté lista (mejora progresiva).
+function attachImages(destinations) {
+  for (const d of destinations) {
+    const cat = CATALOG_BY_ID[d.id];
+    if (cat) ensureImage(cat).catch(() => {}); // arranca la generación cuanto antes
+    const cached = cachedGeneratedUrl(d.id);
+    d.image = { url: cached || `/api/destimg?id=${encodeURIComponent(d.id)}` };
+  }
 }
 
 app.post("/api/quote", async (req, res) => {
@@ -351,7 +352,7 @@ app.post("/api/quote", async (req, res) => {
     res.json({
       ok: true,
       source: usedAI ? "openai" : "fallback",
-      providers: { amadeus: amadeusEnabled(), unsplash: unsplashEnabled() },
+      providers: { amadeus: amadeusEnabled(), unsplash: unsplashEnabled(), imagegen: imageGenEnabled() },
       currency: PRICING.currency,
       pricing: PRICING,
       tiers: TIERS,
@@ -593,7 +594,8 @@ app.post("/api/checkout", async (req, res) => {
       aiFlightHotel(best.dest, prefs, dateStr),
       tier.id === "none" ? Promise.resolve(tier.items) : aiActivities(best.dest, tier),
     ]);
-    const heroImage = (await resolveImageUrl(best.dest.image, `${best.dest.name} ${best.dest.country}`, WIKI_BY_ID[best.dest.id])) || placeholderFor(best.dest);
+    if (CATALOG_BY_ID[best.dest.id]) ensureImage(CATALOG_BY_ID[best.dest.id]).catch(() => {});
+    const heroImage = cachedGeneratedUrl(best.dest.id) || `/api/destimg?id=${encodeURIComponent(best.dest.id)}`;
     const costTotal = best.price.cost + actCostPP * travelers;
     const margin = chargedTotal - costTotal;
     const marginPct = chargedTotal > 0 ? margin / chargedTotal : 0;
@@ -778,12 +780,36 @@ function destImgSvg(name = "Destino", kind = "city") {
 </svg>`;
 }
 const SCENE_KINDS = new Set(["beach", "nature", "city"]);
+// Endpoint inteligente de imagen de destino:
+//  - si la foto generada por IA ya está en caché => redirige a ella.
+//  - si no => dispara la generación en segundo plano y devuelve YA el SVG
+//    ilustrado, para que la tarjeta nunca quede sin imagen.
 app.get("/api/destimg", (req, res) => {
-  const name = String(req.query.name || "Destino").slice(0, 40);
-  const kind = SCENE_KINDS.has(req.query.kind) ? req.query.kind : "city";
+  const id = String(req.query.id || "");
+  const dest = CATALOG_BY_ID[id];
+
+  const cached = cachedGeneratedUrl(id);
+  if (cached) return res.redirect(302, cached);
+
+  if (dest) ensureImage(dest).catch(() => {});
+
+  const name = dest ? dest.name : String(req.query.name || "Destino").slice(0, 40);
+  const kind = dest ? sceneKindFor(dest) : (SCENE_KINDS.has(req.query.kind) ? req.query.kind : "city");
   res.set("Content-Type", "image/svg+xml; charset=utf-8");
-  res.set("Cache-Control", "public, max-age=86400");
+  res.set("Cache-Control", "no-store");
   res.send(destImgSvg(name, kind));
+});
+
+// Estado de generación: devuelve qué destinos ya tienen foto IA lista (URL).
+// El front lo consulta para sustituir el placeholder por la foto real.
+app.get("/api/destimg/status", (req, res) => {
+  const ids = String(req.query.ids || "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 30);
+  const ready = {};
+  for (const id of ids) {
+    const url = cachedGeneratedUrl(id);
+    if (url) ready[id] = url;
+  }
+  res.json({ ok: true, ready });
 });
 
 app.get("/api/health", (_req, res) => res.json({
@@ -792,6 +818,7 @@ app.get("/api/health", (_req, res) => res.json({
   model: OPENAI_MODEL,
   amadeus: amadeusEnabled(),
   unsplash: unsplashEnabled(),
+  imagegen: imageGenEnabled(),
 }));
 
 // Página de reserva (URL limpia) servida como página independiente
@@ -803,6 +830,6 @@ app.listen(PORT, () => {
   const flag = (on) => (on ? "activa" : "off");
   console.log(
     `Incógnito en http://localhost:${PORT}  ` +
-    `(IA: ${flag(!!OPENAI_API_KEY)} · Amadeus: ${flag(amadeusEnabled())} · Unsplash: ${flag(unsplashEnabled())})`
+    `(IA: ${flag(!!OPENAI_API_KEY)} · Amadeus: ${flag(amadeusEnabled())} · Imágenes IA: ${flag(imageGenEnabled())})`
   );
 });
