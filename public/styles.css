@@ -355,6 +355,38 @@ em {
 .chip:hover { border-color: var(--coral); }
 .chip.is-selected { background: var(--coral); color: #fff; border-color: var(--coral); }
 
+/* Chips por orden de prioridad */
+.chips-priority .chip { display: inline-flex; align-items: center; gap: 0.5rem; }
+.chip-rank { display: inline-flex; }
+.chip.is-selected .chip-rank {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 0.3rem; border-radius: 100px;
+  background: #fff; color: var(--coral); font-size: 0.78rem; font-weight: 800; line-height: 1;
+}
+.vibes-order { margin-top: 1rem; font-size: 0.9rem; color: var(--ink-soft); }
+.vibes-order b { color: var(--ink); font-weight: 700; }
+
+/* Nivel de viaje (destino + alojamiento) */
+.stay-tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem; }
+.stay-tier {
+  position: relative; text-align: left; display: flex; flex-direction: column; gap: 0.35rem;
+  padding: 1.2rem 1.1rem; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--field-bg); color: var(--ink); cursor: pointer;
+  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+.stay-tier:hover { border-color: var(--coral); transform: translateY(-3px); }
+.stay-tier.is-selected { border-color: var(--coral); box-shadow: 0 0 0 2px var(--coral) inset; }
+.stay-stars { color: var(--gold); font-size: 0.95rem; letter-spacing: 0.05em; }
+.stay-name { font-family: var(--serif); font-size: 1.25rem; font-weight: 600; }
+.stay-desc { font-size: 0.86rem; color: var(--ink-soft); }
+.stay-eg { font-size: 0.76rem; color: var(--ink-soft); font-style: italic; opacity: 0.85; margin-top: 0.2rem; }
+.stay-badge {
+  position: absolute; top: -0.7rem; right: 0.9rem; background: var(--grad-warm); color: #fff;
+  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; padding: 0.22rem 0.6rem; border-radius: 100px;
+  box-shadow: var(--shadow-sm);
+}
+@media (max-width: 700px) { .stay-tiers { grid-template-columns: 1fr; } }
+
 .slider { width: 100%; appearance: none; height: 6px; border-radius: 100px; background: var(--line); outline: none; margin-top: 0.4rem; }
 .slider::-webkit-slider-thumb { appearance: none; width: 24px; height: 24px; border-radius: 50%; background: var(--coral); cursor: pointer; box-shadow: var(--shadow-sm); }
 .slider::-moz-range-thumb { width: 24px; height: 24px; border: none; border-radius: 50%; background: var(--coral); cursor: pointer; }
@@ -454,8 +486,18 @@ em {
 .cal-cell.low .cal-price { color: #5fd897; }
 .cal-cell.mid .cal-price { color: var(--gold); }
 .cal-cell.high .cal-price { color: var(--coral); }
+/* Rango del viaje: todos los días que abarca la escapada elegida */
+.cal-cell.in-range { background: rgba(255,106,61,0.16); border-color: rgba(255,106,61,0.45); }
+.cal-cell.in-range .cal-day { color: #fff; }
+.cal-cell.range-end { box-shadow: inset 0 0 0 1.5px var(--coral); }
 .cal-cell.selected { background: var(--grad-warm); color: #fff; border-color: transparent; box-shadow: 0 10px 22px -10px var(--coral-deep); transform: translateY(-2px); }
 .cal-cell.selected .cal-price { color: #fff5ec !important; }
+.cal-trip {
+  margin-top: 1rem; padding: 0.7rem 1rem; border-radius: var(--radius-sm);
+  background: rgba(255,106,61,0.1); border: 1px solid rgba(255,106,61,0.28);
+  font-size: 0.88rem; color: var(--ink-soft); text-align: center;
+}
+.cal-trip b { color: var(--ink); text-transform: capitalize; }
 .cal-legend { font-size: 0.78rem; color: var(--ink-soft); margin-top: 1.2rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; justify-content: center; }
 .cal-legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .dot-low { background: #5fd897; } .dot-mid { background: var(--gold); } .dot-high { background: var(--coral); }

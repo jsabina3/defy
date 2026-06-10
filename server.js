@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CATALOG, CATALOG_BY_ID, SEASONS, PRICING, TIERS } from "./src/catalog.js";
+import { CATALOG, CATALOG_BY_ID, SEASONS, PRICING, TIERS, STAY_TIERS, stayTierFactor } from "./src/catalog.js";
 import { amadeusEnabled, cheapestFlightPP, cheapestHotelNight } from "./src/amadeus.js";
 import { unsplashEnabled, resolveImageUrl } from "./src/images.js";
 
@@ -22,11 +22,15 @@ const IS_GPT5 = /^gpt-5/.test(OPENAI_MODEL);
 /* ------------------------------------------------------------------ */
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const round = (n) => Math.round(n);
-const median = (arr) => {
+// Percentil con interpolación lineal (idéntico en front y back para que el
+// precio anclado coincida). p en [0,1]; p=0.5 => mediana.
+const percentile = (arr, p) => {
   if (!arr.length) return 0;
   const s = [...arr].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  if (s.length === 1) return s[0];
+  const idx = (s.length - 1) * p;
+  const lo = Math.floor(idx), hi = Math.ceil(idx);
+  return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (idx - lo);
 };
 
 const CITY_FLIGHT_FACTOR = {
@@ -47,48 +51,83 @@ const SPANISH_CITIES = new Set([
 const originCountryOf = (city) =>
   SPANISH_CITIES.has((city || "").trim().toLowerCase()) ? "España" : null;
 
+// Devuelve la ficha del nivel de viaje elegido (Cómodo / Boutique / Villa).
+const stayInfo = (id) => {
+  const t = STAY_TIERS.find((s) => s.id === id) || STAY_TIERS.find((s) => s.recommended) || STAY_TIERS[0];
+  return { id: t.id, name: t.name, stars: t.stars, stayType: t.stayType, tagline: t.tagline };
+};
+
 /* ------------------------------------------------------------------ */
-/* Selección de destinos (fallback determinista)                      */
+/* Selección de destinos                                              */
 /* ------------------------------------------------------------------ */
+// Puntúa el encaje con las preferencias. Los intereses (vibes) se reciben YA
+// ordenados por prioridad: el primero pesa más que el segundo, etc.
 function scoreDestination(dest, prefs) {
   let score = 0;
   const vibes = prefs.vibes || [];
-  for (const v of vibes) if (dest.tags.includes(v)) score += 3;
+  const n = vibes.length;
+  vibes.forEach((v, i) => {
+    if (dest.tags.includes(v)) score += (n - i) * 2; // 1ª prioridad pesa más
+  });
   // clima
   if (prefs.climate && prefs.climate !== "any") {
     if (dest.climate === prefs.climate) score += 2;
     else if (prefs.climate === "warm" && dest.climate === "temperate") score += 1;
   }
-  // ritmo: relax favorece naturaleza/romántico/playa, aventura cultura/nature/nightlife
+  // ritmo
   if (prefs.pace === "relax" && (dest.tags.includes("nature") || dest.tags.includes("romantic"))) score += 1;
   if (prefs.pace === "adventure" && (dest.tags.includes("culture") || dest.tags.includes("nightlife"))) score += 1;
   // joyas escondidas
   if (dest.isHiddenGem) score += prefs.hiddenGems ? 2.5 : -100;
-  // presupuesto: ahora es TOTAL del paquete (todos los viajeros y noches)
-  if (prefs.budget) {
-    const t = prefs.travelers || 2;
-    const n = prefs.nights || 2;
-    const approxTotal =
-      dest.baseFlight * t +
-      dest.baseHotelNight * n * Math.ceil(t / 2) +
-      (dest.isHiddenGem ? dest.transferCost * t : 0);
-    if (approxTotal > prefs.budget * 1.25) score -= 3;
-    else if (approxTotal <= prefs.budget) score += 1.5;
-  }
-  return score + Math.random() * 0.4; // pequeño desempate
+  return score + Math.random() * 0.3; // pequeño desempate
 }
 
-function selectFallback(prefs, n = 7) {
+// Precio de referencia (temporada neutra, sin finde) usado para comparar
+// destinos entre sí y formar la banda "sin destinos mucho más baratos".
+function referenceCharged(dest, prefs, stayFactor) {
+  const f = cityFactor(prefs.departureCity);
+  const travelers = prefs.travelers || 2;
+  const nights = prefs.nights || 2;
+  const rooms = Math.ceil(travelers / PRICING.peoplePerRoom);
+  const flight = (dest.baseFlight * f) * travelers * PRICING.markups.flight;
+  const hotel = dest.baseHotelNight * stayFactor * nights * rooms * PRICING.markups.hotel;
+  const transfer = dest.transferCost * travelers * PRICING.markups.transfer;
+  return flight + hotel + transfer;
+}
+
+// Selecciona SIEMPRE N destinos (por defecto 10), priorizando el encaje con las
+// vibes ordenadas y manteniéndolos dentro de una banda de precio parecida para
+// que no haya destinos mucho más baratos que otros.
+function selectDestinations(prefs, n = PRICING.destinationsShown) {
   const discarded = new Set(prefs.discarded || []);
   const origin = originCountryOf(prefs.departureCity);
-  return CATALOG
+  const stayFactor = stayTierFactor(prefs.stayTier);
+
+  const pool = CATALOG
     .filter((d) => !discarded.has(d.id))
     .filter((d) => (origin ? d.country !== origin : true))
-    .filter((d) => (prefs.hiddenGems ? true : !d.isHiddenGem))
-    .map((d) => ({ d, s: scoreDestination(d, prefs) }))
-    .sort((a, b) => b.s - a.s)
-    .slice(0, n)
-    .map(({ d }) => ({ id: d.id, matchReason: null, flightPerPerson: null, hotelPerNight: null }));
+    .filter((d) => (prefs.hiddenGems ? true : !d.isHiddenGem));
+
+  const scored = pool
+    .map((d) => ({ d, s: scoreDestination(d, prefs), ref: referenceCharged(d, prefs, stayFactor) }))
+    .sort((a, b) => b.s - a.s);
+
+  // Banda de precio alrededor de la mediana de referencia del pool.
+  const med = percentile(scored.map((x) => x.ref), 0.5) || 0;
+  const lo = med * PRICING.bandLow;
+  const hi = med * PRICING.bandHigh;
+
+  const inBand = scored.filter((x) => x.ref >= lo && x.ref <= hi);
+  const chosen = inBand.slice(0, n);
+  // Si la banda deja menos de N, completamos con los mejores restantes.
+  if (chosen.length < n) {
+    const ids = new Set(chosen.map((x) => x.d.id));
+    for (const x of scored) {
+      if (chosen.length >= n) break;
+      if (!ids.has(x.d.id)) { chosen.push(x); ids.add(x.d.id); }
+    }
+  }
+  return chosen.map(({ d }) => ({ id: d.id, matchReason: null, flightPerPerson: null, hotelPerNight: null }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -134,56 +173,38 @@ async function openaiJSON(system, user, { timeoutMs = 28000, temperature = 0.7 }
   }
 }
 
-async function aiSelectDestinations(prefs) {
-  const discarded = new Set(prefs.discarded || []);
-  const origin = originCountryOf(prefs.departureCity);
-  const candidates = CATALOG
-    .filter((d) => !discarded.has(d.id))
-    .filter((d) => (origin ? d.country !== origin : true))
-    .filter((d) => (prefs.hiddenGems ? true : !d.isHiddenGem))
-    .map((d) => ({
-      id: d.id, name: d.name, country: d.country, gateway: d.gateway,
-      isHiddenGem: d.isHiddenGem, tags: d.tags, climate: d.climate,
-      baseFlight: d.baseFlight, baseHotelNight: d.baseHotelNight,
-    }));
-
+// La selección y el precio son deterministas (servidor = fuente de verdad). La
+// IA solo personaliza el texto de "por qué encaja" de cada destino ya elegido,
+// teniendo en cuenta el ORDEN de prioridad de los intereses del viajero.
+async function aiMatchReasons(picks, prefs) {
+  if (!OPENAI_API_KEY || !picks.length) return picks;
+  const list = picks.map((p) => {
+    const d = CATALOG_BY_ID[p.id];
+    return { id: d.id, name: d.name, country: d.country, tags: d.tags, climate: d.climate, isHiddenGem: d.isHiddenGem };
+  });
   const system =
     "Eres el motor de recomendación de una agencia de viajes sorpresa premium. " +
-    "Seleccionas destinos y estimas precios realistas de mercado en EUR. " +
+    "Escribes una frase breve y personalizada de por qué cada destino encaja con el viajero. " +
     "Respondes SIEMPRE en JSON válido y en español.";
+  const vibesOrdered = (prefs.vibes || []).length
+    ? (prefs.vibes || []).map((v, i) => `${i + 1}º ${v}`).join(", ")
+    : "sin preferencias marcadas";
+  const user = `Preferencias del viajero (intereses por ORDEN de prioridad, el 1º es el que más importa):
+- Intereses: ${vibesOrdered}
+- Clima: ${prefs.climate || "any"} · Ritmo: ${prefs.pace || "balanced"} · Nivel: ${prefs.stayTier || "boutique"}
 
-  const user = `Preferencias del viajero:
-- Ciudad de salida: ${prefs.departureCity || "Madrid"}
-- Intereses (vibes): ${(prefs.vibes || []).join(", ") || "ninguno"}
-- Clima preferido: ${prefs.climate || "any"}
-- Ritmo: ${prefs.pace || "balanced"}
-- Viajeros: ${prefs.travelers || 2}
-- Noches: ${prefs.nights || 2}
-- Presupuesto TOTAL del paquete (todos los viajeros y noches, EUR): ${prefs.budget || "flexible"}
-- Abierto a joyas escondidas (volar + 1-2h en coche/tren/bus): ${prefs.hiddenGems ? "SÍ" : "NO"}
-${origin ? `- País de origen: ${origin}. NO propongas destinos dentro de ${origin}.` : ""}
+Destinos ya seleccionados:
+${JSON.stringify(list)}
 
-Candidatos (elige y ordena de mejor a peor encaje):
-${JSON.stringify(candidates)}
-
-Devuelve JSON EXACTO con esta forma:
-{"picks":[{"id":"<id del candidato>","matchReason":"<1 frase en español, personalizada, max 90 caracteres>","flightPerPerson":<entero EUR ida y vuelta económica desde la ciudad de salida hasta el aeropuerto del destino>,"hotelPerNight":<entero EUR habitación doble céntrica 3-4*>}]}
-Reglas: elige entre 6 y 8 destinos; usa SOLO ids de la lista; precios realistas 2026; si el viajero NO quiere joyas escondidas no incluyas ninguna; prioriza el encaje con vibes y clima.`;
-
-  const out = await openaiJSON(system, user);
-  if (!out || !Array.isArray(out.picks)) return null;
-  const picks = out.picks
-    .filter((p) => p && CATALOG_BY_ID[p.id] && !discarded.has(p.id))
-    .filter((p) => (origin ? CATALOG_BY_ID[p.id].country !== origin : true))
-    .filter((p) => (prefs.hiddenGems ? true : !CATALOG_BY_ID[p.id].isHiddenGem))
-    .slice(0, 8)
-    .map((p) => ({
-      id: p.id,
-      matchReason: typeof p.matchReason === "string" ? p.matchReason.slice(0, 120) : null,
-      flightPerPerson: Number.isFinite(p.flightPerPerson) ? clamp(p.flightPerPerson, 40, 600) : null,
-      hotelPerNight: Number.isFinite(p.hotelPerNight) ? clamp(p.hotelPerNight, 50, 600) : null,
-    }));
-  return picks.length ? picks : null;
+Devuelve JSON EXACTO: {"reasons":{"<id>":"<frase personalizada, max 90 caracteres, en español>"}}
+Para CADA id de la lista. Da más peso a la 1ª prioridad del viajero al justificar el encaje.`;
+  const out = await openaiJSON(system, user, { timeoutMs: 18000 });
+  const reasons = out?.reasons;
+  if (!reasons || typeof reasons !== "object") return picks;
+  return picks.map((p) => ({
+    ...p,
+    matchReason: typeof reasons[p.id] === "string" ? reasons[p.id].slice(0, 120) : p.matchReason,
+  }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -256,9 +277,9 @@ async function attachImages(destinations) {
 app.post("/api/quote", async (req, res) => {
   try {
     const prefs = normalizePrefs(req.body || {});
-    let picks = await aiSelectDestinations(prefs);
-    let usedAI = !!picks;
-    if (!picks) picks = selectFallback(prefs);
+    let picks = selectDestinations(prefs); // siempre 10, banda de precio comparable
+    picks = await aiMatchReasons(picks, prefs);
+    const usedAI = !!OPENAI_API_KEY;
 
     await enrichPrices(picks, prefs);
     const destinations = picks.map((p) => buildDestination(p, prefs));
@@ -271,6 +292,7 @@ app.post("/api/quote", async (req, res) => {
       currency: PRICING.currency,
       pricing: PRICING,
       tiers: TIERS,
+      stayTiers: STAY_TIERS,
       prefs,
       destinations,
     });
@@ -291,7 +313,10 @@ function monthIndex(dateStr) {
   return new Date(dateStr + "T12:00:00").getMonth();
 }
 
-async function priceForDestination(dest, dateStr, prefs, tier, { live = false } = {}) {
+// Coste y precio de PROVEEDOR (vuelo + hotel + traslado) de un destino para una
+// fecha. NO incluye actividades (son uniformes y se suman aparte, al ancla).
+// stayFactor escala el hotel según el nivel de viaje elegido (Cómodo/Boutique/Villa).
+async function destProvider(dest, dateStr, prefs, stayFactor, { live = false } = {}) {
   const m = monthIndex(dateStr);
   const season = dest.seasonality[m];
   const weekend = isWeekend(dateStr) ? 1 + PRICING.weekendPremium : 1;
@@ -299,9 +324,7 @@ async function priceForDestination(dest, dateStr, prefs, tier, { live = false } 
   const travelers = prefs.travelers;
   const rooms = Math.ceil(travelers / PRICING.peoplePerRoom);
 
-  // En modo "live" consultamos Amadeus para LAS FECHAS EXACTAS elegidas. Si hay
-  // precio real, no aplicamos estacionalidad/finde (el precio real ya refleja la
-  // demanda de esas fechas); si no, caemos al modelo base × estacionalidad.
+  // En modo "live" consultamos Amadeus para LAS FECHAS EXACTAS elegidas.
   let realFlightPP = null, realHotelNight = null;
   if (live && amadeusEnabled()) {
     const ret = addDays(dateStr, nights);
@@ -311,35 +334,35 @@ async function priceForDestination(dest, dateStr, prefs, tier, { live = false } 
     ]);
   }
 
-  // costes de proveedor (sin margen)
   const flightCost = Number.isFinite(realFlightPP)
     ? realFlightPP * travelers
     : dest.flightPerPerson * season * weekend * travelers;
   const hotelCost = Number.isFinite(realHotelNight)
-    ? realHotelNight * nights * rooms
-    : dest.hotelPerNight * season * nights * rooms;
+    ? realHotelNight * stayFactor * nights * rooms
+    : dest.hotelPerNight * stayFactor * season * nights * rooms;
   const transferCost = dest.transferCost * travelers;
-  const activityCost = (tier?.perPersonCost || 0) * travelers;
 
-  // precio cobrado (con markup por componente)
   const flightCharged = flightCost * PRICING.markups.flight;
   const hotelCharged = hotelCost * PRICING.markups.hotel;
   const transferCharged = transferCost * PRICING.markups.transfer;
-  // actividades: precio redondo por persona fijado en el tier (margen = precio - coste)
-  const activityCharged = (tier?.pricePerPerson ?? (tier?.perPersonCost || 0)) * travelers;
-
-  const cost = flightCost + hotelCost + transferCost + activityCost;
-  const charged = flightCharged + hotelCharged + transferCharged + activityCharged;
 
   return {
-    cost: round(cost),
-    charged: round(charged),
+    cost: flightCost + hotelCost + transferCost,
+    charged: flightCharged + hotelCharged + transferCharged,
     live: Number.isFinite(realFlightPP) || Number.isFinite(realHotelNight),
     components: {
-      cost: { flight: round(flightCost), hotel: round(hotelCost), transfer: round(transferCost), activity: round(activityCost) },
-      charged: { flight: round(flightCharged), hotel: round(hotelCharged), transfer: round(transferCharged), activity: round(activityCharged) },
+      cost: { flight: round(flightCost), hotel: round(hotelCost), transfer: round(transferCost) },
+      charged: { flight: round(flightCharged), hotel: round(hotelCharged), transfer: round(transferCharged) },
     },
   };
+}
+
+// Precio sorpresa (ancla) para una fecha: percentil del precio-con-margen de
+// TODO el pool ofertado + actividades. Es estable: NO depende de qué destinos
+// descarte el cliente, así que descartar nunca revela cuál era el barato.
+function anchorCharged(providerChargedList, activityChargedTotal) {
+  const base = percentile(providerChargedList, PRICING.anchorPercentile);
+  return Math.ceil((base + activityChargedTotal) / 10) * 10;
 }
 
 /* ------------------------------------------------------------------ */
@@ -369,14 +392,24 @@ function fallbackFlightHotel(dest, prefs, dateStr) {
   const retH = 17 + ((h >> 5) % 5);
   const retNo = `${airline.slice(0, 2).toUpperCase()}${1000 + ((h >> 7) % 8999)}`;
   const hoods = ["centro histórico", "casco antiguo", "barrio de moda", "junto al paseo marítimo", "zona monumental"];
-  const adjs = ["Boutique", "Grand", "Casa", "Palazzo", "Suites", "Maison"];
-  const stars = dest.hotelPerNight > 200 ? 5 : dest.hotelPerNight > 150 ? 4 : 3;
+  // El tipo de alojamiento depende del nivel de viaje elegido.
+  const stay = stayInfo(prefs.stayTier);
+  const adjsByTier = {
+    comodo: ["Casa", "Aparthotel", "Guesthouse", "Lofts", "B&B"],
+    boutique: ["Boutique", "Grand", "Palazzo", "Suites", "Maison"],
+    villa: ["Villa", "Suite", "Relais", "Residenza", "Château"],
+  };
+  const suffixByTier = { comodo: ["", "& Co", "Stay"], boutique: ["Hotel", "Resort"], villa: ["Private", "& Spa", "Retreat"] };
+  const adjs = adjsByTier[stay.id] || adjsByTier.boutique;
+  const sfx = suffixByTier[stay.id] || ["Hotel"];
+  const lastName = dest.name.split(" ").slice(-1)[0];
   return {
     outbound: { airline, flightNo, from: prefs.departureCity || "Madrid", to: dest.gateway, dep: `${pad(depH)}:00`, arr: addMinutes(depH, 0, dur), durationMin: dur },
     inbound: { airline, flightNo: retNo, from: dest.gateway, to: prefs.departureCity || "Madrid", dep: `${pad(retH)}:30`, arr: addMinutes(retH, 30, dur), durationMin: dur },
     hotel: {
-      name: `${adjs[h % adjs.length]} ${dest.name.split(" ").slice(-1)[0]} ${h % 2 ? "Resort" : "Hotel"}`,
-      stars,
+      name: `${adjs[h % adjs.length]} ${lastName} ${sfx[h % sfx.length]}`.trim(),
+      stars: stay.stars,
+      stayType: stay.stayType,
       neighborhood: hoods[h % hoods.length],
       rating: (8.2 + (h % 16) / 10).toFixed(1),
     },
@@ -394,14 +427,19 @@ async function aiFlightHotel(dest, prefs, dateStr) {
 - Fecha de salida: ${dateStr}
 - Fecha de vuelta: ${returnDate}
 - Noches: ${prefs.nights}
-- Categoría hotel orientativa: ${dest.hotelPerNight > 200 ? "5*" : dest.hotelPerNight > 150 ? "4*" : "3-4*"}
+- Nivel de viaje elegido: ${stayInfo(prefs.stayTier).name} → ${stayInfo(prefs.stayTier).stayType} (${stayInfo(prefs.stayTier).stars}★)
 
-Devuelve JSON EXACTO:
+Devuelve JSON EXACTO (el hotel DEBE ser coherente con el nivel/categoría indicado):
 {"outbound":{"airline":"","flightNo":"","from":"","to":"","dep":"HH:MM","arr":"HH:MM","durationMin":0},
 "inbound":{"airline":"","flightNo":"","from":"","to":"","dep":"HH:MM","arr":"HH:MM","durationMin":0},
 "hotel":{"name":"","stars":4,"neighborhood":"","rating":"8.9"}}`;
   const out = await openaiJSON(system, user, { temperature: 0.8, timeoutMs: 20000 });
-  if (out && out.outbound && out.inbound && out.hotel) return out;
+  if (out && out.outbound && out.inbound && out.hotel) {
+    const stay = stayInfo(prefs.stayTier);
+    out.hotel.stars = stay.stars; // categoría coherente con el nivel elegido
+    out.hotel.stayType = stay.stayType;
+    return out;
+  }
   return fallbackFlightHotel(dest, prefs, dateStr);
 }
 
@@ -454,30 +492,37 @@ app.post("/api/checkout", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Faltan datos de la reserva" });
     }
 
-    // Reconstruimos los destinos activos
-    const active = picks
-      .filter((p) => CATALOG_BY_ID[p.id])
-      .map((p) => buildDestination(p, prefs));
-    if (!active.length) return res.status(400).json({ ok: false, error: "No hay destinos activos" });
+    const travelers = prefs.travelers;
+    const stayFactor = stayTierFactor(prefs.stayTier);
+    const actCostPP = tier.perPersonCost || 0;
+    const actPricePP = tier.id === "none" ? 0 : (tier.pricePerPerson ?? actCostPP);
+    const activityChargedTotal = actPricePP * travelers;
 
-    // Recalculamos precios EN FIRME para las fechas exactas (Amadeus si está activo).
-    const priced = await Promise.all(
-      active.map(async (d) => ({ dest: d, price: await priceForDestination(d, dateStr, prefs, tier, { live: true }) }))
+    // TODO el pool ofertado (el ancla de precio se calcula sobre todos, descartados
+    // incluidos, para que el precio no cambie ni revele nada al descartar).
+    const poolDest = picks
+      .filter((p) => CATALOG_BY_ID[p.id])
+      .map((p) => ({ raw: p, dest: buildDestination(p, prefs) }));
+    if (!poolDest.length) return res.status(400).json({ ok: false, error: "No hay destinos activos" });
+
+    const pricedPool = await Promise.all(
+      poolDest.map(async (x) => ({ ...x, price: await destProvider(x.dest, dateStr, prefs, stayFactor, { live: true }) }))
     );
 
-    // Precio cobrado = precio sorpresa = mediana de lo cobrado entre destinos activos
-    // Se redondea SIEMPRE hacia arriba al múltiplo de 10 más cercano (precio "redondo").
-    const chargedList = priced.map((x) => x.price.charged);
-    let chargedTotal = Math.ceil(median(chargedList) / 10) * 10;
+    // Precio sorpresa = ancla sobre el pool completo + actividades.
+    let chargedTotal = anchorCharged(pricedPool.map((x) => x.price.charged), activityChargedTotal);
 
     // Tarifa por cambiar destinos: 1º descarte gratis, 2º = 10 €/persona (máx. 2).
     const discards = clamp(parseInt(body.discards, 10) || 0, 0, 2);
     const swapFee = Math.max(0, discards - 1) * 10 * prefs.travelers;
     chargedTotal += swapFee;
 
-    // Asignamos el destino que maximiza margen (menor coste real) — así opera el modelo sorpresa
+    // Asignamos, entre los destinos ACTIVOS (no descartados), el de menor coste
+    // real (mayor margen) — así opera el modelo sorpresa, sin alterar el precio.
+    const activePriced = pricedPool.filter((x) => !x.raw.discarded);
+    const pickFrom = activePriced.length ? activePriced : pricedPool;
     let best = null;
-    for (const x of priced) {
+    for (const x of pickFrom) {
       if (!best || x.price.cost < best.price.cost) best = x;
     }
 
@@ -486,15 +531,17 @@ app.post("/api/checkout", async (req, res) => {
       tier.id === "none" ? Promise.resolve(tier.items) : aiActivities(best.dest, tier),
     ]);
     const heroImage = await resolveImageUrl(best.dest.image, `${best.dest.name} ${best.dest.country}`);
-    const margin = chargedTotal - best.price.cost;
+    const costTotal = best.price.cost + actCostPP * travelers;
+    const margin = chargedTotal - costTotal;
     const marginPct = chargedTotal > 0 ? margin / chargedTotal : 0;
+    const breakdown = {
+      cost: { ...best.price.components.cost, activity: round(actCostPP * travelers) },
+      charged: { ...best.price.components.charged, activity: round(activityChargedTotal) },
+    };
 
     // Margen que aportan SOLO las actividades: precio que asume el cliente
     // (pricePerPerson) frente a nuestro coste real (perPersonCost). El valor de
     // mercado (valuePerPerson) muestra cuánto ahorra el cliente vs reservarlo solo.
-    const travelers = prefs.travelers;
-    const actCostPP = tier.perPersonCost || 0;
-    const actPricePP = tier.id === "none" ? 0 : (tier.pricePerPerson ?? actCostPP);
     const actValuePP = tier.valuePerPerson || 0;
     const activities = tier.id === "none" ? null : {
       travelers,
@@ -524,6 +571,7 @@ app.post("/api/checkout", async (req, res) => {
           pricePerPerson: tier.id === "none" ? 0 : (tier.pricePerPerson ?? tier.perPersonCost),
           perPersonCost: tier.perPersonCost || 0,
         },
+        stay: stayInfo(prefs.stayTier),
         destination: {
           name: best.dest.name, country: best.dest.country, region: best.dest.region,
           gateway: best.dest.gateway, isHiddenGem: best.dest.isHiddenGem,
@@ -534,14 +582,14 @@ app.post("/api/checkout", async (req, res) => {
       finance: {
         currency: PRICING.currency,
         chargedTotal,
-        costTotal: best.price.cost,
+        costTotal: round(costTotal),
         margin: round(margin),
         marginPct: Math.round(marginPct * 1000) / 10,
-        breakdown: best.price.components,
+        breakdown,
         activities,
         swapFee,
         discards,
-        live: priced.some((x) => x.price.live),
+        live: pricedPool.some((x) => x.price.live),
       },
     });
   } catch (err) {
@@ -566,13 +614,17 @@ app.post("/api/price", async (req, res) => {
     if (!dateStr || !picks.length) {
       return res.status(400).json({ ok: false, error: "Faltan datos para el precio" });
     }
-    const active = picks.filter((p) => CATALOG_BY_ID[p.id]).map((p) => buildDestination(p, prefs));
-    if (!active.length) return res.status(400).json({ ok: false, error: "No hay destinos activos" });
+    const pool = picks.filter((p) => CATALOG_BY_ID[p.id]).map((p) => buildDestination(p, prefs));
+    if (!pool.length) return res.status(400).json({ ok: false, error: "No hay destinos activos" });
 
+    const stayFactor = stayTierFactor(prefs.stayTier);
+    const activityChargedTotal = (tier.pricePerPerson ?? tier.perPersonCost ?? 0) * prefs.travelers;
+
+    // Ancla sobre el pool COMPLETO ofertado: el precio no cambia al descartar.
     const priced = await Promise.all(
-      active.map((d) => priceForDestination(d, dateStr, prefs, tier, { live: true }))
+      pool.map((d) => destProvider(d, dateStr, prefs, stayFactor, { live: true }))
     );
-    let total = Math.ceil(median(priced.map((p) => p.charged)) / 10) * 10;
+    let total = anchorCharged(priced.map((p) => p.charged), activityChargedTotal);
 
     const discards = clamp(parseInt(body.discards, 10) || 0, 0, 2);
     const swapFee = Math.max(0, discards - 1) * 10 * prefs.travelers;
@@ -594,11 +646,18 @@ app.post("/api/price", async (req, res) => {
 /* ------------------------------------------------------------------ */
 function normalizePrefs(p) {
   const allowedVibes = ["beach", "culture", "nature", "food", "nightlife", "romantic"];
+  const allowedStay = STAY_TIERS.map((t) => t.id);
+  // vibes llegan YA en orden de prioridad (el 1º es el más importante);
+  // conservamos ese orden y solo deduplicamos.
+  const vibes = Array.isArray(p.vibes)
+    ? [...new Set(p.vibes.filter((v) => allowedVibes.includes(v)))].slice(0, 6)
+    : [];
   return {
     departureCity: typeof p.departureCity === "string" ? p.departureCity.slice(0, 60) : "Madrid",
-    vibes: Array.isArray(p.vibes) ? p.vibes.filter((v) => allowedVibes.includes(v)).slice(0, 6) : [],
+    vibes,
     climate: ["warm", "temperate", "cool", "any"].includes(p.climate) ? p.climate : "any",
     pace: ["relax", "balanced", "adventure"].includes(p.pace) ? p.pace : "balanced",
+    stayTier: allowedStay.includes(p.stayTier) ? p.stayTier : "boutique",
     travelers: clamp(parseInt(p.travelers, 10) || 2, 1, 8),
     nights: clamp(parseInt(p.nights, 10) || 2, 1, 6),
     budget: Number.isFinite(+p.budget) && +p.budget > 0 ? clamp(+p.budget, 150, 20000) : null,

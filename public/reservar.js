@@ -5,9 +5,10 @@ const state = {
     departureCity: "Madrid",
     travelers: 2,
     nights: 2,
-    vibes: [],
+    vibes: [],          // ordenadas por prioridad (la 1ª es la que más pesa)
     climate: "any",
     pace: "balanced",
+    stayTier: "boutique", // nivel de viaje: comodo · boutique · villa
     hiddenGems: true,
   },
   quote: null,        // respuesta de /api/quote
@@ -47,7 +48,7 @@ const io = new IntersectionObserver((entries) => {
 $$(".reveal").forEach((el) => io.observe(el));
 
 /* ===================== Quiz ===================== */
-const STEPS = 3;
+const STEPS = 4;
 const quizBar = $("#quizBar");
 const prevBtn = $("#quizPrev");
 const nextBtn = $("#quizNext");
@@ -82,10 +83,48 @@ $$("#nightsChoice .choice").forEach((c) => c.addEventListener("click", () => {
 // Ciudad
 $("#departureCity").addEventListener("change", (e) => state.prefs.departureCity = e.target.value);
 
-// Vibes
+// Vibes por ORDEN de prioridad: el orden de click es la prioridad.
+const VIBE_LABELS = {
+  beach: "Costa & playa", culture: "Ciudad & cultura", nature: "Naturaleza & lagos",
+  food: "Gastronomía", nightlife: "Fiesta & noche", romantic: "Romántico",
+};
+function renderVibesPriority() {
+  $$("#vibes .chip").forEach((chip) => {
+    const v = chip.dataset.vibe;
+    const idx = state.prefs.vibes.indexOf(v);
+    const rank = chip.querySelector(".chip-rank");
+    if (idx >= 0) {
+      chip.classList.add("is-selected");
+      if (rank) rank.textContent = idx + 1;
+    } else {
+      chip.classList.remove("is-selected");
+      if (rank) rank.textContent = "";
+    }
+  });
+  const order = $("#vibesOrder");
+  if (order) {
+    if (state.prefs.vibes.length) {
+      order.hidden = false;
+      order.innerHTML = "Tu orden de prioridad: " +
+        state.prefs.vibes.map((v, i) => `<b>${i + 1}. ${VIBE_LABELS[v] || v}</b>`).join(" › ");
+    } else {
+      order.hidden = true;
+    }
+  }
+}
 $$("#vibes .chip").forEach((c) => c.addEventListener("click", () => {
-  c.classList.toggle("is-selected");
-  state.prefs.vibes = $$("#vibes .chip.is-selected").map((x) => x.dataset.vibe);
+  const v = c.dataset.vibe;
+  const i = state.prefs.vibes.indexOf(v);
+  if (i >= 0) state.prefs.vibes.splice(i, 1);
+  else state.prefs.vibes.push(v);
+  renderVibesPriority();
+}));
+
+// Nivel de viaje (destino + alojamiento)
+$$("#stayTiers .stay-tier").forEach((b) => b.addEventListener("click", () => {
+  $$("#stayTiers .stay-tier").forEach((x) => x.classList.remove("is-selected"));
+  b.classList.add("is-selected");
+  state.prefs.stayTier = b.dataset.stay;
 }));
 
 // Clima / ritmo
@@ -296,7 +335,18 @@ function currentTier() {
 function isWeekend(dateStr) { const d = new Date(dateStr + "T12:00:00").getDay(); return d === 5 || d === 6; }
 function monthIndex(dateStr) { return new Date(dateStr + "T12:00:00").getMonth(); }
 
-function chargedForDestination(dest, dateStr, tier) {
+// Factor del nivel de viaje elegido (escala el hotel). Llega del servidor en
+// state.quote.stayTiers; por defecto "boutique" (factor 1).
+function stayFactor() {
+  const tiers = state.quote?.stayTiers || [];
+  const t = tiers.find((x) => x.id === state.prefs.stayTier)
+    || tiers.find((x) => x.recommended) || tiers[0];
+  return t ? t.hotelFactor : 1;
+}
+
+// Coste-con-margen de PROVEEDOR (vuelo + hotel + traslado) de un destino para una
+// fecha. NO incluye actividades (uniformes, se suman al ancla).
+function providerCharged(dest, dateStr) {
   const p = state.quote.pricing;
   const m = monthIndex(dateStr);
   const season = dest.seasonality[m];
@@ -306,29 +356,61 @@ function chargedForDestination(dest, dateStr, tier) {
   const rooms = Math.ceil(travelers / p.peoplePerRoom);
 
   const flight = dest.flightPerPerson * season * weekend * travelers * p.markups.flight;
-  const hotel = dest.hotelPerNight * season * nights * rooms * p.markups.hotel;
+  const hotel = dest.hotelPerNight * stayFactor() * season * nights * rooms * p.markups.hotel;
   const transfer = dest.transferCost * travelers * p.markups.transfer;
-  const activity = (tier.pricePerPerson ?? (tier.perPersonCost || 0)) * travelers;
-  return flight + hotel + transfer + activity;
+  return flight + hotel + transfer;
 }
 
-function median(arr) {
+// Percentil con interpolación lineal (idéntico al servidor).
+function percentile(arr, q) {
   if (!arr.length) return 0;
   const s = [...arr].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  if (s.length === 1) return s[0];
+  const idx = (s.length - 1) * q;
+  const lo = Math.floor(idx), hi = Math.ceil(idx);
+  return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (idx - lo);
 }
 
+// Precio sorpresa (ancla): percentil del precio de TODOS los destinos ofertados
+// (no solo los activos) + actividades. Es estable: descartar destinos NO cambia
+// el precio, así que nunca revela cuál era el barato.
 function surpriseCharged(dateStr, tier) {
-  const list = activeDestinations().map((d) => chargedForDestination(d, dateStr, tier));
-  // total redondeado SIEMPRE hacia arriba al múltiplo de 10 más cercano
-  return roundUpTo(median(list), 10);
+  const p = state.quote.pricing;
+  const all = state.quote.destinations.map((d) => providerCharged(d, dateStr));
+  const base = percentile(all, p.anchorPercentile ?? 0.5);
+  const activity = (tier.pricePerPerson ?? (tier.perPersonCost || 0)) * state.prefs.travelers;
+  return roundUpTo(base + activity, 10);
 }
 
 /* ===================== Calendario ===================== */
 function fmt(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 function startMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function minDate() { const d = new Date(); d.setDate(d.getDate() + 10); return d; }
+function addDaysStr(dateStr, days) {
+  const d = new Date(dateStr + "T12:00:00"); d.setDate(d.getDate() + days); return fmt(d);
+}
+
+// Conjunto de días que abarca el viaje (salida + noches) a partir de una salida.
+function tripRange(startStr) {
+  const nights = state.prefs.nights;
+  const set = new Set();
+  for (let i = 0; i <= nights; i++) set.add(addDaysStr(startStr, i));
+  return { start: startStr, end: addDaysStr(startStr, nights), set };
+}
+
+// Muestra bajo el calendario todos los días que incluiría el viaje.
+function updateTripCaption() {
+  const cap = $("#calTrip");
+  if (!cap) return;
+  if (!state.selectedDate) { cap.hidden = true; return; }
+  const r = tripRange(state.selectedDate);
+  const opts = { weekday: "short", day: "numeric", month: "short" };
+  const start = new Date(r.start + "T12:00:00").toLocaleDateString("es-ES", opts);
+  const end = new Date(r.end + "T12:00:00").toLocaleDateString("es-ES", opts);
+  const nights = state.prefs.nights;
+  cap.hidden = false;
+  cap.innerHTML = `🧳 Tu viaje: <b>${start}</b> → <b>${end}</b> · ${nights + 1} días, ${nights} ${nights === 1 ? "noche" : "noches"} (resaltados en el calendario)`;
+}
 
 function renderCalendar() {
   const grid = $("#calGrid");
@@ -358,6 +440,9 @@ function renderCalendar() {
   const q1 = monthPrices[Math.floor(monthPrices.length * 0.33)] || 0;
   const q2 = monthPrices[Math.floor(monthPrices.length * 0.66)] || 0;
 
+  // Días que abarca el viaje según la salida elegida (para resaltar el rango).
+  const range = state.selectedDate ? tripRange(state.selectedDate) : null;
+
   for (let day = 1; day <= daysInMonth; day++) {
     const date = new Date(month.getFullYear(), month.getMonth(), day);
     const ds = fmt(date);
@@ -369,7 +454,14 @@ function renderCalendar() {
     } else {
       const per = surpriseCharged(ds, tier) / state.prefs.travelers;
       const level = per <= q1 ? "low" : per <= q2 ? "mid" : "high";
-      cell.className = `cal-cell avail ${level}` + (state.selectedDate === ds ? " selected" : "");
+      let cls = `cal-cell avail ${level}`;
+      if (range && range.set.has(ds)) {
+        cls += " in-range";
+        if (ds === range.start) cls += " range-start";
+        if (ds === range.end) cls += " range-end";
+      }
+      if (state.selectedDate === ds) cls += " selected";
+      cell.className = cls;
       cell.innerHTML = `<span class="cal-day">${day}</span><span class="cal-price">${euro(roundUpTo(per, 5))}</span>`;
       cell.addEventListener("click", () => {
         state.selectedDate = ds;
@@ -378,6 +470,7 @@ function renderCalendar() {
     }
     grid.appendChild(cell);
   }
+  updateTripCaption();
 }
 
 $("#calPrev").addEventListener("click", () => {
@@ -397,9 +490,11 @@ function updateSummary() {
   const tier = currentTier();
   const tierName = state.selectedTier === "none" ? "Solo vuelo + hotel"
     : state.quote.tiers.find((t) => t.id === state.selectedTier).name;
+  const stay = (state.quote.stayTiers || []).find((t) => t.id === state.prefs.stayTier);
+  const stayName = stay ? stay.name : "";
 
   if (!state.selectedDate) {
-    $("#summaryLine").textContent = `${state.prefs.travelers} viajeros · ${state.prefs.nights + 1} días · ${tierName}`;
+    $("#summaryLine").textContent = `${state.prefs.travelers} viajeros · ${state.prefs.nights + 1} días · ${stayName ? stayName + " · " : ""}${tierName}`;
     $("#summaryTotal").textContent = "Elige fecha";
     $("#summaryPer").textContent = "";
     updateResultNav();
@@ -411,7 +506,7 @@ function updateSummary() {
   const d = new Date(state.selectedDate + "T12:00:00");
   const dateLabel = d.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "long" });
   const feeNote = fee > 0 ? ` · cambio de destino +${euro(fee)}` : "";
-  $("#summaryLine").textContent = `${dateLabel} · ${state.prefs.travelers} viajeros · ${tierName}${feeNote}`;
+  $("#summaryLine").textContent = `${dateLabel} · ${state.prefs.travelers} viajeros · ${stayName ? stayName + " · " : ""}${tierName}${feeNote}`;
   $("#summaryTotal").textContent = euro(total);
   $("#summaryPer").textContent = `· ${euro(per)}/persona`;
   updateResultNav();
@@ -440,9 +535,10 @@ async function refreshPrice() {
         date: state.selectedDate,
         tierId: state.selectedTier === "none" ? "none" : state.selectedTier,
         discards: state.discarded.size,
-        destinations: activeDestinations().map((d) => ({
+        destinations: state.quote.destinations.map((d) => ({
           id: d.id, flightPerPerson: d.flightPerPerson,
           hotelPerNight: d.hotelPerNight, matchReason: d.matchReason,
+          discarded: state.discarded.has(d.id),
         })),
       }),
     });
@@ -487,9 +583,10 @@ async function checkout() {
         date: state.selectedDate,
         tierId: state.selectedTier === "none" ? "none" : state.selectedTier,
         discards: state.discarded.size,
-        destinations: activeDestinations().map((d) => ({
+        destinations: state.quote.destinations.map((d) => ({
           id: d.id, flightPerPerson: d.flightPerPerson,
           hotelPerNight: d.hotelPerNight, matchReason: d.matchReason,
+          discarded: state.discarded.has(d.id),
         })),
       }),
     });
@@ -564,9 +661,10 @@ function renderOverlay(data) {
           <div class="price-chip">Vuelo para esta fecha · <b>${euro(ch.flight)}</b></div>
         </div>
         <div class="book-box">
-          <h5>🏨 Hotel · ${b.nights} noches</h5>
+          <h5>🏨 Hotel · ${b.nights} noches${b.stay ? ` · ${b.stay.name}` : ""}</h5>
           <div class="hotel-name">${b.flightHotel.hotel.name}</div>
           <div class="hotel-meta"><span class="stars">${stars(b.flightHotel.hotel.stars)}</span> · ${b.flightHotel.hotel.neighborhood}</div>
+          ${b.flightHotel.hotel.stayType ? `<div class="hotel-meta">${b.flightHotel.hotel.stayType}</div>` : ""}
           <div class="hotel-meta">Valoración ${b.flightHotel.hotel.rating}/10</div>
           <div class="price-chip">Hotel ${b.nights} noches · <b>${euro(ch.hotel)}</b></div>
         </div>

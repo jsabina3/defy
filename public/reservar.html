@@ -37,7 +37,7 @@
 
       <!-- Paso 1 -->
       <div class="quiz-step is-active" data-step="0">
-        <p class="quiz-kicker">Paso 1 de 3</p>
+        <p class="quiz-kicker">Paso 1 de 4</p>
         <h3 class="quiz-q">¿Desde dónde y con quién?</h3>
         <div class="field-row">
           <label class="field">
@@ -70,22 +70,51 @@
 
       <!-- Paso 2 -->
       <div class="quiz-step" data-step="1">
-        <p class="quiz-kicker">Paso 2 de 3</p>
+        <p class="quiz-kicker">Paso 2 de 4</p>
         <h3 class="quiz-q">¿Qué te apetece vivir?</h3>
-        <p class="quiz-hint">Elige todo lo que encaje contigo.</p>
-        <div class="chips" id="vibes">
-          <button type="button" class="chip" data-vibe="beach">🏖️ Costa &amp; playa</button>
-          <button type="button" class="chip" data-vibe="culture">🏛️ Ciudad &amp; cultura</button>
-          <button type="button" class="chip" data-vibe="nature">🏔️ Naturaleza &amp; lagos</button>
-          <button type="button" class="chip" data-vibe="food">🍝 Gastronomía</button>
-          <button type="button" class="chip" data-vibe="nightlife">🌙 Fiesta &amp; noche</button>
-          <button type="button" class="chip" data-vibe="romantic">💞 Romántico</button>
+        <p class="quiz-hint">Tócalos <b>por orden de prioridad</b>: el primero que elijas es el que más pesa al escoger tus destinos.</p>
+        <div class="chips chips-priority" id="vibes">
+          <button type="button" class="chip" data-vibe="beach"><span class="chip-rank"></span>🏖️ Costa &amp; playa</button>
+          <button type="button" class="chip" data-vibe="culture"><span class="chip-rank"></span>🏛️ Ciudad &amp; cultura</button>
+          <button type="button" class="chip" data-vibe="nature"><span class="chip-rank"></span>🏔️ Naturaleza &amp; lagos</button>
+          <button type="button" class="chip" data-vibe="food"><span class="chip-rank"></span>🍝 Gastronomía</button>
+          <button type="button" class="chip" data-vibe="nightlife"><span class="chip-rank"></span>🌙 Fiesta &amp; noche</button>
+          <button type="button" class="chip" data-vibe="romantic"><span class="chip-rank"></span>💞 Romántico</button>
+        </div>
+        <p class="vibes-order" id="vibesOrder" hidden></p>
+      </div>
+
+      <!-- Paso 3 · Nivel de viaje (destino + alojamiento) -->
+      <div class="quiz-step" data-step="2">
+        <p class="quiz-kicker">Paso 3 de 4</p>
+        <h3 class="quiz-q">¿Qué nivel de viaje buscas?</h3>
+        <p class="quiz-hint">Define el tipo de destino y, sobre todo, de alojamiento. No es lo mismo un hostal con encanto en Marsella que una villa sobre el Lago de Como.</p>
+        <div class="stay-tiers" id="stayTiers">
+          <button type="button" class="stay-tier" data-stay="comodo">
+            <span class="stay-stars">★★★</span>
+            <span class="stay-name">Cómodo</span>
+            <span class="stay-desc">Aparthotel, casa de huéspedes u hostal boutique, céntrico y con buen rollo.</span>
+            <span class="stay-eg">Ej.: hostal con encanto en Marsella · aparthotel en Oporto</span>
+          </button>
+          <button type="button" class="stay-tier is-selected" data-stay="boutique">
+            <span class="stay-badge">Recomendado</span>
+            <span class="stay-stars">★★★★</span>
+            <span class="stay-name">Boutique</span>
+            <span class="stay-desc">Hotel con carácter 4★ en la mejor zona, perfecto equilibrio calidad-precio.</span>
+            <span class="stay-eg">Ej.: boutique con terraza en Florencia · 4★ frente al casco antiguo</span>
+          </button>
+          <button type="button" class="stay-tier" data-stay="villa">
+            <span class="stay-stars">★★★★★</span>
+            <span class="stay-name">Villa &amp; Lujo</span>
+            <span class="stay-desc">Villa privada, suite o 5★ con vistas y extras. La experiencia más alta.</span>
+            <span class="stay-eg">Ej.: villa sobre el Lago de Como · suite con caldera en Santorini</span>
+          </button>
         </div>
       </div>
 
-      <!-- Paso 3 -->
-      <div class="quiz-step" data-step="2">
-        <p class="quiz-kicker">Paso 3 de 3</p>
+      <!-- Paso 4 -->
+      <div class="quiz-step" data-step="3">
+        <p class="quiz-kicker">Paso 4 de 4</p>
         <h3 class="quiz-q">Clima, ritmo y atrevimiento</h3>
         <span class="field-label">Clima preferido</span>
         <div class="choice-row" id="climateChoice">
@@ -156,6 +185,7 @@
             <span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span>
           </div>
           <div class="cal-grid" id="calGrid"></div>
+          <p class="cal-trip" id="calTrip" hidden></p>
           <p class="cal-legend"><i class="dot-low"></i> mejor precio &nbsp; <i class="dot-mid"></i> medio &nbsp; <i class="dot-high"></i> alta demanda · precio por persona, vuelo + hotel</p>
         </div>
       </section>

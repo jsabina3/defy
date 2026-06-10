@@ -11,12 +11,64 @@ export const SEASONS = {
 };
 
 // Parámetros de negocio (markups por componente => margen)
+//  - anchorPercentile: el precio sorpresa que ve el cliente es un percentil del
+//    coste-con-margen de TODO el pool de destinos ofertados (no del subconjunto
+//    activo). Así el precio es el mismo elija lo que elija el cliente y NO cambia
+//    al descartar destinos (no revela cuál era el barato). Internamente asignamos
+//    el destino de menor coste (mayor margen), pero el cliente nunca lo sabe.
+//  - bandLow/bandHigh: al seleccionar destinos solo entramos los que tienen un
+//    precio de referencia parecido (dentro de la banda alrededor de la mediana),
+//    para que no haya destinos mucho más baratos que otros.
 export const PRICING = {
   currency: "EUR",
-  markups: { flight: 1.08, hotel: 1.25, transfer: 1.32, activity: 1.42 },
-  weekendPremium: 0.15, // salidas viernes/sábado
+  markups: { flight: 1.06, hotel: 1.2, transfer: 1.28, activity: 1.42 },
+  weekendPremium: 0.12, // salidas viernes/sábado
   peoplePerRoom: 2,
+  anchorPercentile: 0.45, // ligeramente por debajo de la mediana => precio competitivo, con margen al asignar el destino más barato
+  bandLow: 0.72,         // ningún destino por debajo del 72 % de la mediana del pool
+  bandHigh: 1.42,        // ni por encima del 142 %
+  destinationsShown: 10, // siempre 10 destinos, sea cual sea la combinación
 };
+
+// Niveles de viaje (destino + alojamiento). Es lo que separa "una villa en el
+// Lago de Como" de "un hostal en Marsella": el mismo destino cambia por completo
+// según el nivel elegido. El factor multiplica el precio/noche del hotel y define
+// la categoría (estrellas) y el tipo de alojamiento que se reserva.
+//   - hotelFactor: multiplica baseHotelNight (coste de proveedor) por nivel.
+//   - stars: categoría orientativa para la revelación del hotel.
+//   - stayType: descripción del tipo de alojamiento por destino.
+export const STAY_TIERS = [
+  {
+    id: "comodo",
+    name: "Cómodo",
+    tagline: "Alojamiento sencillo, céntrico y con buen rollo",
+    stars: 3,
+    hotelFactor: 0.74,
+    stayType: "Aparthotel, casa de huéspedes u hostal boutique (3★)",
+    examples: "Un hostal con encanto en Marsella, un aparthotel céntrico en Oporto",
+  },
+  {
+    id: "boutique",
+    name: "Boutique",
+    tagline: "Hotel con carácter 4★ en la mejor zona",
+    stars: 4,
+    hotelFactor: 1.0,
+    stayType: "Hotel boutique 4★, céntrico y con encanto",
+    examples: "Un boutique con terraza en Florencia, un 4★ frente al casco antiguo",
+    recommended: true,
+  },
+  {
+    id: "villa",
+    name: "Villa & Lujo",
+    tagline: "Villa privada, suite o 5★ con vistas y extras",
+    stars: 5,
+    hotelFactor: 1.7,
+    stayType: "Villa privada, suite o 5★ con vistas",
+    examples: "Una villa sobre el Lago de Como, una suite con caldera en Santorini",
+  },
+];
+export const STAY_TIERS_BY_ID = Object.fromEntries(STAY_TIERS.map((t) => [t.id, t]));
+export const stayTierFactor = (id) => (STAY_TIERS_BY_ID[id] || STAY_TIERS_BY_ID.boutique).hotelFactor;
 
 // Tiers de actividades sorpresa.
 //  - perPersonCost: coste real de proveedor por persona (tarifa neta B2B / trato
