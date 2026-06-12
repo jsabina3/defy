@@ -21,6 +21,9 @@ const state = {
   selectedTier: "none", // arranca en "solo vuelo + hotel"; el nivel se elige en el paso 3
   calMonth: null,     // Date (día 1 del mes mostrado)
   resultStep: 0,      // 0 calendario · 1 destinos · 2 experiencia
+  livePrice: null,    // precio confirmado por /api/price para la selección actual
+  livePriceKey: null,
+  priceLoading: false,
 };
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -37,8 +40,6 @@ function discardFeeTotal() {
 /* Caché de precios en firme (clave: fecha|tier|descartes|destinos activos) */
 const priceCache = {};
 let priceReqSeq = 0;
-let estimateTimer = null;
-let estimateReqSeq = 0;
 function priceKey() {
   return [
     state.selectedDate, state.selectedTier, state.discarded.size,
@@ -64,7 +65,6 @@ function showStep(n) {
   quizBar.style.width = ((n + 1) / STEPS) * 100 + "%";
   prevBtn.disabled = n === 0;
   nextBtn.textContent = n === STEPS - 1 ? "Ver mis destinos y precios" : "Siguiente";
-  scheduleLiveEstimate(80);
 }
 prevBtn.addEventListener("click", () => state.step > 0 && showStep(state.step - 1));
 nextBtn.addEventListener("click", () => {
@@ -79,20 +79,17 @@ $$("[data-step-btn]").forEach((b) => b.addEventListener("click", () => {
   v = Math.max(1, Math.min(8, v));
   input.value = v; state.prefs.travelers = v;
   renderAges();
-  scheduleLiveEstimate();
 }));
 
 // Duración
 $$("#nightsChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#nightsChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected"); state.prefs.nights = +c.dataset.nights;
-  scheduleLiveEstimate();
 }));
 
 // Ciudad
 $("#departureCity").addEventListener("change", (e) => {
   state.prefs.departureCity = e.target.value;
-  scheduleLiveEstimate();
 });
 
 // Perfil del viajero (con quién viaja)
@@ -100,7 +97,6 @@ $$("#profileChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#profileChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected");
   state.prefs.profile = c.dataset.profile;
-  scheduleLiveEstimate();
 }));
 
 // Edad de cada viajero: un campo por viajero. Se regenera al cambiar el número
@@ -124,7 +120,6 @@ function renderAges() {
     const idx = +e.target.dataset.ageIdx;
     const v = parseInt(e.target.value, 10);
     state.prefs.ages[idx] = Number.isFinite(v) && v >= 0 ? Math.max(0, Math.min(99, v)) : null;
-    scheduleLiveEstimate();
   }));
 }
 
@@ -163,7 +158,6 @@ $$("#vibes .chip").forEach((c) => c.addEventListener("click", () => {
   if (i >= 0) state.prefs.vibes.splice(i, 1);
   else state.prefs.vibes.push(v);
   renderVibesPriority();
-  scheduleLiveEstimate();
 }));
 
 // Nivel de viaje (destino + alojamiento)
@@ -171,14 +165,12 @@ $$("#stayTiers .stay-tier").forEach((b) => b.addEventListener("click", () => {
   $$("#stayTiers .stay-tier").forEach((x) => x.classList.remove("is-selected"));
   b.classList.add("is-selected");
   state.prefs.stayTier = b.dataset.stay;
-  scheduleLiveEstimate();
 }));
 
 // Clima / ritmo
 $$("#climateChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#climateChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected"); state.prefs.climate = c.dataset.climate;
-  scheduleLiveEstimate();
 }));
 // Ritmo del viaje + explicación de qué implica cada opción.
 const PACE_EXPLAIN = {
@@ -194,65 +186,13 @@ $$("#paceChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#paceChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected"); state.prefs.pace = c.dataset.pace;
   updatePaceExplain();
-  scheduleLiveEstimate();
 }));
 updatePaceExplain();
 
 // Joyas escondidas
 $("#hiddenGems").addEventListener("change", (e) => {
   state.prefs.hiddenGems = e.target.checked;
-  scheduleLiveEstimate();
 });
-
-/* ===================== Estimación viva ===================== */
-function renderEstimate(data) {
-  const box = $("#liveEstimate");
-  const headline = $("#estimateHeadline");
-  const note = $("#estimateNote");
-  const range = $("#estimateRange");
-  if (!box || !headline || !note || !range) return;
-
-  box.classList.remove("is-loading");
-  const r = data?.range;
-  const copy = data?.copy || {};
-  if (!r) {
-    headline.textContent = "Estimación no disponible todavía";
-    note.textContent = "Seguiremos afinando cuando completes más preferencias.";
-    range.textContent = "—";
-    return;
-  }
-  range.textContent = `${euro(r.low)} - ${euro(r.high)}`;
-  headline.textContent = copy.headline || `Entre ${euro(r.low)} y ${euro(r.high)} por persona`;
-  const drivers = Array.isArray(copy.drivers) && copy.drivers.length
-    ? ` ${copy.drivers.join(" · ")}`
-    : "";
-  note.textContent = `${copy.note || "Rango orientativo de vuelo + hotel antes de elegir fecha."}${drivers}`;
-}
-
-function scheduleLiveEstimate(delay = 450) {
-  clearTimeout(estimateTimer);
-  estimateTimer = setTimeout(refreshLiveEstimate, delay);
-}
-
-async function refreshLiveEstimate() {
-  const box = $("#liveEstimate");
-  if (!box) return;
-  box.classList.add("is-loading");
-  const seq = ++estimateReqSeq;
-  try {
-    const res = await fetch("/api/estimate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prefs: state.prefs, step: state.step }),
-    });
-    const data = await res.json();
-    if (seq !== estimateReqSeq) return;
-    if (data.ok) renderEstimate(data);
-    else renderEstimate(null);
-  } catch (err) {
-    if (seq === estimateReqSeq) renderEstimate(null);
-  }
-}
 
 /* ===================== Cotización ===================== */
 async function submitQuiz() {
@@ -273,6 +213,9 @@ async function submitQuiz() {
     state.minBudget = Number.isFinite(data.minBudgetPerPerson) ? data.minBudgetPerPerson : null;
     state.discarded = new Set();
     state.selectedDate = null;
+    state.livePrice = null;
+    state.livePriceKey = null;
+    state.priceLoading = false;
     Object.keys(priceCache).forEach((k) => delete priceCache[k]);
     state.selectedTier = "none";
     state.calMonth = startMonth(minDate());
@@ -400,16 +343,25 @@ function updateResultNav() {
   const prev = $("#rPrev"), next = $("#rNext");
   if (!prev || !next) return;
   prev.disabled = state.resultStep === 0;
+  const needsPrice = !!state.selectedDate && state.livePriceKey !== priceKey();
+  if (state.priceLoading) {
+    next.textContent = "Comprobando precio…";
+    next.disabled = true;
+    return;
+  }
   if (state.resultStep === RSTEPS - 1) {
     next.textContent = "Reservar a ciegas";
-    next.disabled = !state.selectedDate;
+    next.disabled = !state.selectedDate || needsPrice;
   } else {
     next.textContent = "Siguiente →";
-    next.disabled = state.resultStep === 0 && !state.selectedDate;
+    next.disabled = (state.resultStep === 0 && !state.selectedDate) || needsPrice;
   }
 }
 $("#rPrev").addEventListener("click", () => { if (state.resultStep > 0) showResultStep(state.resultStep - 1); });
-$("#rNext").addEventListener("click", () => {
+$("#rNext").addEventListener("click", async () => {
+  if (!state.selectedDate) { showResultStep(0); return; }
+  const ok = await ensureFreshPrice();
+  if (!ok) return;
   if (state.resultStep < RSTEPS - 1) showResultStep(state.resultStep + 1);
   else checkout();
 });
@@ -460,6 +412,7 @@ function renderDestinations() {
     }
     renderDestinations();
     renderCalendar();
+    invalidateLivePrice();
     updateSummary();
     refreshPrice();
   }));
@@ -535,13 +488,14 @@ function renderTiers() {
 
   $$("#tiers .tier").forEach((el) => el.addEventListener("click", () => {
     state.selectedTier = el.dataset.tier;
+    invalidateLivePrice();
     renderTiers(); renderCalendar(); updateSummary(); refreshPrice();
   }));
 }
 
 function currentTier() {
-  if (state.selectedTier === "none") return { perPersonCost: 0 };
-  return state.quote.tiers.find((t) => t.id === state.selectedTier) || { perPersonCost: 0 };
+  if (state.selectedTier === "none") return { id: "none", name: "Solo vuelo + hotel", perPersonCost: 0, pricePerPerson: 0 };
+  return state.quote.tiers.find((t) => t.id === state.selectedTier) || { id: "none", perPersonCost: 0, pricePerPerson: 0 };
 }
 
 /* ===================== Motor de precios (idéntico al servidor) ===================== */
@@ -692,6 +646,7 @@ function renderCalendar() {
       cell.innerHTML = `<span class="cal-day">${day}</span><span class="cal-price">${euro(roundUpTo(per, 5))}</span>`;
       cell.addEventListener("click", () => {
         state.selectedDate = ds;
+        invalidateLivePrice();
         renderCalendar(); updateSummary(); refreshPrice();
       });
     }
@@ -728,16 +683,21 @@ function updateSummary() {
     return;
   }
   const fee = discardFeeTotal();
-  const total = surpriseCharged(state.selectedDate, tier) + fee;
-  const per = roundUpTo(total / state.prefs.travelers, 5);
   const d = new Date(state.selectedDate + "T12:00:00");
   const dateLabel = d.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "long" });
   const feeNote = fee > 0 ? ` · cambio de destino +${euro(fee)}` : "";
-  const overBudget = Number.isFinite(state.prefs.budget) && per > state.prefs.budget;
+  const hasLivePrice = state.livePrice && state.livePriceKey === priceKey();
+  const per = hasLivePrice ? state.livePrice.perPerson : null;
+  const overBudget = Number.isFinite(state.prefs.budget) && Number.isFinite(per) && per > state.prefs.budget;
   const budgetNote = overBudget ? ` · ⚠️ sobre tu presupuesto (${euro(state.prefs.budget)}/p)` : "";
   $("#summaryLine").textContent = `${dateLabel} · ${state.prefs.travelers} viajeros · ${stayName ? stayName + " · " : ""}${tierName}${feeNote}${budgetNote}`;
-  $("#summaryTotal").textContent = euro(total);
-  $("#summaryPer").textContent = `· ${euro(per)}/persona`;
+  if (hasLivePrice) {
+    $("#summaryTotal").textContent = euro(state.livePrice.total);
+    $("#summaryPer").textContent = `· ${euro(per)}/persona${state.livePrice.live ? " · precio en firme" : ""}`;
+  } else {
+    $("#summaryTotal").textContent = state.priceLoading ? "Comprobando…" : "Pendiente";
+    $("#summaryPer").textContent = "· confirma precio para continuar";
+  }
   updateResultNav();
 }
 
@@ -745,14 +705,16 @@ function updateSummary() {
 // hay Amadeus). Muestra primero la estimación del calendario y la sustituye por
 // el precio definitivo cuando llega del servidor (puede variar ligeramente).
 async function refreshPrice() {
-  if (!state.selectedDate) return;
+  if (!state.selectedDate) return false;
   const key = priceKey();
-  if (priceCache[key]) { applyLivePrice(priceCache[key]); return; }
+  if (priceCache[key]) { applyLivePrice(priceCache[key]); return true; }
 
   const totalEl = $("#summaryTotal");
   const perEl = $("#summaryPer");
+  state.priceLoading = true;
   if (totalEl) totalEl.classList.add("is-checking");
   if (perEl) perEl.textContent = "· comprobando precio…";
+  updateResultNav();
 
   const seq = ++priceReqSeq;
   try {
@@ -763,6 +725,7 @@ async function refreshPrice() {
         prefs: state.prefs,
         date: state.selectedDate,
         tierId: state.selectedTier === "none" ? "none" : state.selectedTier,
+        tier: currentTier(),
         discards: state.discarded.size,
         // Enviamos la ficha COMPLETA del destino (la IA puede haberlo inventado,
         // así el servidor lo cotiza aunque no esté en su catálogo).
@@ -776,6 +739,7 @@ async function refreshPrice() {
     if (data.ok) {
       priceCache[key] = data;
       applyLivePrice(data);
+      return true;
     } else {
       updateSummary();
     }
@@ -783,19 +747,38 @@ async function refreshPrice() {
     console.error(err);
     if (seq === priceReqSeq) updateSummary();
   } finally {
+    if (seq === priceReqSeq) state.priceLoading = false;
     if (seq === priceReqSeq && totalEl) totalEl.classList.remove("is-checking");
+    if (seq === priceReqSeq && state.livePriceKey !== priceKey()) updateSummary();
+    if (seq === priceReqSeq) updateResultNav();
   }
+  return false;
 }
 
 function applyLivePrice(data) {
   if (!state.selectedDate) return;
   const totalEl = $("#summaryTotal");
   const perEl = $("#summaryPer");
+  state.livePrice = data;
+  state.livePriceKey = priceKey();
   if (totalEl) { totalEl.textContent = euro(data.total); totalEl.classList.remove("is-checking"); }
   if (perEl) {
     const per = data.perPerson ?? roundUpTo(data.total / state.prefs.travelers, 5);
     perEl.textContent = `· ${euro(per)}/persona${data.live ? " · precio en firme" : ""}`;
   }
+  updateResultNav();
+}
+
+function invalidateLivePrice() {
+  state.livePrice = null;
+  state.livePriceKey = null;
+}
+
+async function ensureFreshPrice() {
+  if (!state.selectedDate) return false;
+  if (state.livePriceKey === priceKey()) return true;
+  updateSummary();
+  return refreshPrice();
 }
 
 /* ===================== Checkout ===================== */
@@ -811,6 +794,7 @@ async function checkout() {
         prefs: state.prefs,
         date: state.selectedDate,
         tierId: state.selectedTier === "none" ? "none" : state.selectedTier,
+        tier: currentTier(),
         discards: state.discarded.size,
         // Ficha completa del destino (ver nota en refreshPrice).
         destinations: state.quote.destinations.map((d) => ({

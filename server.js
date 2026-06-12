@@ -144,11 +144,30 @@ function slugify(s) {
     .slice(0, 40)) || "dest";
 }
 
+const countryKey = (s) => String(s || "")
+  .trim()
+  .toLowerCase()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "");
+
+// Suelos para corregir cuando la IA infravalora vuelos a destinos que son
+// físicamente lejanos desde España. Así la regla de duración no se rompe.
+const COUNTRY_FLIGHT_FLOOR = {
+  georgia: 260, armenia: 270, azerbaiyan: 280, azerbaijan: 280,
+  turquia: 230, turkey: 230, chipre: 220, cyprus: 220,
+  egipto: 260, egypt: 260, jordania: 285, jordan: 285,
+  islandia: 240, iceland: 240, noruega: 210, norway: 210,
+  suecia: 190, sweden: 190, finlandia: 210, finland: 210,
+  estonia: 190, letonia: 185, lituania: 185,
+};
+const countryFlightFloor = (country) => COUNTRY_FLIGHT_FLOOR[countryKey(country)] || 0;
+
 // Valida y normaliza un destino propuesto por la IA a la forma que usa el motor.
 function normalizeDest(raw, seen) {
   if (!raw || typeof raw !== "object") return null;
   const name = String(raw.name || "").trim().slice(0, 60);
   if (!name) return null;
+  const country = String(raw.country || "").trim().slice(0, 40) || "—";
   let id = slugify(raw.id || name);
   while (seen.has(id)) id = `${id}-${seen.size + 1}`;
   const numIn = (v, lo, hi, dflt) => {
@@ -159,7 +178,7 @@ function normalizeDest(raw, seen) {
   const d = {
     id,
     name,
-    country: String(raw.country || "").trim().slice(0, 40) || "—",
+    country,
     region: String(raw.region || "").trim().slice(0, 60),
     gateway: String(raw.gateway || name).trim().slice(0, 40),
     isHiddenGem: isGem,
@@ -169,7 +188,7 @@ function normalizeDest(raw, seen) {
       : [],
     climate: ALLOWED_CLIMATE.has(raw.climate) ? raw.climate : "temperate",
     season: ALLOWED_SEASON.has(raw.season) ? raw.season : "city",
-    baseFlight: numIn(raw.baseFlight, 30, 1200, 150),
+    baseFlight: Math.max(numIn(raw.baseFlight, 30, 1200, 150), countryFlightFloor(country)),
     baseHotelNight: numIn(raw.baseHotelNight, 40, 1200, 150),
     transferCost: numIn(raw.transferCost, 0, 300, isGem ? 30 : 0),
     appeal: numIn(raw.appeal, 1, 5, 3),
@@ -202,6 +221,24 @@ function antiBajonaScore(dest) {
   const appeal = (dest.appeal ?? 3) - 3;   // -2 .. 2
   const novelty = (dest.novelty ?? 3) - 3; // -2 .. 2 (más alto = más sorprendente)
   return distance * 0.7 + appeal * 0.9 + novelty * 0.8;
+}
+
+// La duración manda la distancia razonable: escapadas cortas no deben perderse
+// en vuelos largos, y 7 días sí justifican algo más lejano sin irse a long haul.
+function distanceBoundsForTrip(prefs) {
+  const nights = clamp(parseInt(prefs.nights, 10) || 2, 1, 6);
+  if (nights <= 1) return { min: 0, max: 135, label: "vuelos cortos" };
+  if (nights === 2) return { min: 0, max: 165, label: "vuelos cortos o medios" };
+  if (nights === 3) return { min: 85, max: 205, label: "media distancia" };
+  if (nights === 4) return { min: 100, max: 245, label: "media distancia amplia" };
+  if (nights === 5) return { min: 125, max: 290, label: "destinos más especiales" };
+  return { min: 160, max: 340, label: "destinos más lejanos sin long haul" };
+}
+
+function matchesTripDistance(dest, prefs, relax = 1) {
+  const { min, max } = distanceBoundsForTrip(prefs);
+  const flight = Number.isFinite(dest.baseFlight) ? dest.baseFlight : 150;
+  return flight >= min * (2 - relax) && flight <= max * relax;
 }
 
 // Ajuste por demografía: el perfil del grupo (solo/pareja/amigos/familia) y la
@@ -333,10 +370,15 @@ function selectDestinations(prefs, sourcePool = CATALOG, n = PRICING.destination
   const vibes = prefs.vibes || [];
   const topVibes = vibes.slice(0, 2).filter(Boolean);
 
-  const pool = sourcePool
+  const basePool = sourcePool
     .filter((d) => !discarded.has(d.id))
     .filter((d) => (origin ? d.country !== origin : true))
     .filter((d) => (prefs.hiddenGems ? true : !d.isHiddenGem));
+  let pool = basePool.filter((d) => matchesTripDistance(d, prefs));
+  if (pool.length < Math.min(PRICING.destinationsMin || n, basePool.length)) {
+    pool = basePool.filter((d) => matchesTripDistance(d, prefs, 1.18));
+  }
+  if (!pool.length) pool = basePool;
 
   const scored = pool
     .map((d) => ({ d, s: scoreDestination(d, prefs), ref: referenceCharged(d, prefs, stayFactor) }))
@@ -433,6 +475,7 @@ async function aiDestinations(prefs, n = 14) {
   if (!OPENAI_API_KEY) return null;
   const origin = prefs.departureCity || "Madrid";
   const originCountry = originCountryOf(origin) || "—";
+  const distance = distanceBoundsForTrip(prefs);
   const vibesOrdered = (prefs.vibes || []).length
     ? (prefs.vibes || []).map((v, i) => `${i + 1}º ${v}`).join(", ")
     : "sin preferencias marcadas";
@@ -450,10 +493,12 @@ Viajero:
 - Nivel de alojamiento: ${prefs.stayTier || "boutique"}
 - Noches: ${prefs.nights} · Viajeros: ${prefs.travelers}
 - ¿Acepta joyas escondidas (volar + 1-2 h en coche/tren/ferry hasta el sitio)?: ${prefs.hiddenGems ? "sí" : "no"}
+- Distancia adecuada para esta duración: ${distance.label}; baseFlight entre ${distance.min} y ${distance.max} € aprox.
 
 Reglas IMPORTANTES (filosofía "que no dé bajona"):
 - NO repitas el país de origen (${originCountry}).
 - Prioriza destinos que MEREZCAN el viaje por tres ejes: (1) DISTANCIA: que se sienta una escapada de verdad, no algo a un paso; (2) ATRACTIVO: factor "wow"; (3) DESCONOCIMIENTO: poco trillado/sorprendente para alguien de ${originCountry}. Ejemplo: para alguien de Madrid, Oporto resulta cercano y muy trillado: penalízalo frente a destinos más lejanos y diferentes.
+- Respeta la distancia adecuada a la duración: viajes de 2-3 días, vuelos cortos/medios; viajes de 7 días, destinos más lejanos pero sin long haul ni rutas agotadoras.
 - Respeta clima e intereses y adapta al perfil/edad (familia: evita fiesta, favorece naturaleza/playa; pareja: romántico; amigos: animado; sénior: cultura/naturaleza).
 - Cada destino debe incluir en "tags" las DOS primeras prioridades de interés (ambas obligatorias en cada destino).
 - ${prefs.hiddenGems ? "Puedes incluir joyas escondidas (isHiddenGem=true y describe el traslado en 'transfer')." : "NO incluyas joyas escondidas: todas isHiddenGem=false y sin traslados largos."}
@@ -627,6 +672,109 @@ function attachImages(destinations) {
   }
 }
 
+function roundUpTo(n, step) {
+  return Math.ceil(n / step) * step;
+}
+
+// Extrae el precio "≈XX €" de un texto de actividad (0 si no lo encuentra).
+function priceOf(s) {
+  const m = (s || "").match(/≈\s*(\d+(?:[.,]\d+)?)/);
+  return m ? parseFloat(m[1].replace(",", ".")) : 0;
+}
+
+function priceActivityPack(pack, baseTier) {
+  const items = Array.isArray(pack.items) ? pack.items.filter(Boolean).slice(0, 5) : [];
+  const rawValue = items.reduce((a, it) => a + priceOf(it), 0);
+  const fallbackValue = baseTier.valuePerPerson || baseTier.items.reduce((a, it) => a + priceOf(it), 0);
+  const valuePerPerson = Math.max(round(rawValue || fallbackValue), baseTier.pricePerPerson || 0);
+  // El pack cobra menos que reservar suelto, pero deja margen sobre coste neto.
+  const pricePerPerson = roundUpTo(Math.max(valuePerPerson * 0.72, (baseTier.pricePerPerson || 0) * 0.75), 10);
+  const perPersonCost = round(Math.max(pricePerPerson * 0.62, baseTier.perPersonCost || 0));
+  return {
+    id: baseTier.id,
+    name: baseTier.name,
+    tagline: String(pack.tagline || baseTier.tagline).slice(0, 90),
+    perPersonCost,
+    pricePerPerson,
+    valuePerPerson,
+    items: items.length ? items : baseTier.items,
+  };
+}
+
+function fallbackActivityPacks(destinations, prefs) {
+  const tags = new Set(destinations.flatMap((d) => d.tags || []));
+  const family = prefs.profile === "familia" || (prefs.ages || []).some((a) => Number.isFinite(a) && a < 13);
+  const foodie = tags.has("food") || (prefs.vibes || []).includes("food");
+  const nature = tags.has("nature") || (prefs.vibes || []).includes("nature");
+  const beach = tags.has("beach") || (prefs.vibes || []).includes("beach");
+  const culture = tags.has("culture") || (prefs.vibes || []).includes("culture");
+  const lively = tags.has("nightlife") && !family;
+  const essenceItems = [
+    `${foodie ? "Ruta de sabores locales" : culture ? "Paseo cultural guiado" : "Tour de bienvenida con guía local"} adaptado al destino · ≈${family ? 58 : 68} €`,
+    `${beach ? "Plan al atardecer junto al mar" : nature ? "Mirador o ruta suave de naturaleza" : "Cata o taller local de temporada"} · ≈${family ? 42 : 55} €`,
+    "Reserva prioritaria + mapa personalizado de rincones secretos · ≈25 €",
+  ];
+  const immersionItems = [
+    `${foodie ? "Experiencia gastronómica con chef o mercado" : "Experiencia privada con anfitrión local"} · ≈${family ? 95 : 115} €`,
+    `${culture ? "Guía privado de medio día" : nature ? "Actividad outdoor guiada" : "Ruta curada por barrios con carácter"} · ≈${family ? 105 : 130} €`,
+    `${beach ? "Actividad de costa o barco compartido" : nature ? "E-bike, kayak o senderismo guiado" : lively ? "Plan nocturno seguro con entrada incluida" : "Taller artesanal o creativo local"} · ≈${family ? 62 : 76} €`,
+    "Asistente de viaje por chat 24/7 · ≈20 €",
+  ];
+  return [
+    priceActivityPack({ tagline: "Lo esencial del destino sin cargar la agenda", items: essenceItems }, TIERS[0]),
+    priceActivityPack({ tagline: "Más profundidad, planes privados y ritmo más completo", items: immersionItems }, TIERS[1]),
+  ];
+}
+
+async function aiActivityPacks(destinations, prefs) {
+  if (!OPENAI_API_KEY || !destinations.length) return fallbackActivityPacks(destinations, prefs);
+  const list = destinations.map((d) => ({
+    name: d.name, country: d.country, region: d.region, tags: d.tags,
+    hiddenGem: d.isHiddenGem, transfer: d.transfer,
+  }));
+  const system =
+    "Eres diseñador de experiencias para una agencia de viajes sorpresa premium. " +
+    "Creas packs de actividades que funcionan para cualquiera de los destinos posibles, " +
+    "adaptados al perfil del grupo. Respondes SIEMPRE en JSON válido y en español.";
+  const user = `Crea 2 packs de actividades para este viaje sorpresa.
+
+Viajero:
+- Perfil: ${profileLabel(prefs.profile)}${agesLabel(prefs) ? ` · ${agesLabel(prefs)}` : ""}
+- Viajeros: ${prefs.travelers} · Noches: ${prefs.nights}
+- Intereses por prioridad: ${(prefs.vibes || []).join(", ") || "sin marcar"}
+- Ritmo: ${prefs.pace || "balanced"} · Clima: ${prefs.climate || "any"}
+
+Destinos posibles:
+${JSON.stringify(list)}
+
+Reglas:
+- Pack 1 id "esencia": 3 actividades, ligeras, universales y con buen valor.
+- Pack 2 id "inmersion": 4 actividades, más privadas/profundas y de mayor valor.
+- Las actividades deben encajar con los POSIBLES destinos, características del viaje y viajeros.
+- Si hay niños, evita noche/fiesta y usa planes family-friendly.
+- Cada actividad termina con precio de mercado por persona: " · ≈XX €".
+- Los precios deben ser realistas y distintos entre packs; no copies los ejemplos base.
+- Máximo 95 caracteres por actividad sin contar precio.
+
+Devuelve JSON EXACTO:
+{"packs":[
+  {"id":"esencia","tagline":"","items":["... · ≈XX €","... · ≈XX €","... · ≈XX €"]},
+  {"id":"inmersion","tagline":"","items":["... · ≈XX €","...","...","..."]}
+]}`;
+  const out = await openaiJSON(system, user, { temperature: 0.75, timeoutMs: 18000 });
+  const packs = out?.packs;
+  if (!Array.isArray(packs) || packs.length < 2) return fallbackActivityPacks(destinations, prefs);
+  return TIERS.slice(0, 2).map((base, i) => {
+    const pack = packs.find((p) => p?.id === base.id) || packs[i] || {};
+    const expected = base.id === "esencia" ? 3 : 4;
+    const items = Array.isArray(pack.items) ? pack.items.filter((it) => typeof it === "string").slice(0, expected) : [];
+    if (items.length !== expected || items.some((it) => !/≈\s*\d/.test(it))) {
+      return fallbackActivityPacks(destinations, prefs)[i];
+    }
+    return priceActivityPack({ ...pack, items }, base);
+  });
+}
+
 app.post("/api/quote", async (req, res) => {
   try {
     const prefs = normalizePrefs(req.body || {});
@@ -656,6 +804,7 @@ app.post("/api/quote", async (req, res) => {
     await enrichPrices(picks, prefs);
     const destinations = picks.map((p) => buildDestination(p, prefs));
     await attachImages(destinations);
+    const activityPacks = await aiActivityPacks(destinations, prefs);
 
     // Mínimo por persona (suelo) según los precios encontrados y la configuración
     // elegida: el cliente fijará su presupuesto por encima de este valor.
@@ -667,7 +816,7 @@ app.post("/api/quote", async (req, res) => {
       providers: { amadeus: amadeusEnabled(), unsplash: unsplashEnabled(), imagegen: imageGenEnabled() },
       currency: PRICING.currency,
       pricing: PRICING,
-      tiers: TIERS,
+      tiers: activityPacks,
       stayTiers: STAY_TIERS,
       prefs,
       destinations,
@@ -961,12 +1110,6 @@ Devuelve JSON EXACTO (el hotel DEBE ser coherente con el nivel/categoría indica
   return fallbackFlightHotel(dest, prefs, dateStr);
 }
 
-// Extrae el precio "≈XX €" de un texto de actividad (0 si no lo encuentra).
-const priceOf = (s) => {
-  const m = (s || "").match(/≈\s*(\d+(?:[.,]\d+)?)/);
-  return m ? parseFloat(m[1].replace(",", ".")) : 0;
-};
-
 // Adapta las actividades genéricas del tier a experiencias CONCRETAS del destino
 // Y al perfil/edad del viajero (familia, pareja, amigos, solo), buscando con IA
 // planes realistas para ese destino. El PRECIO de cada actividad se ajusta al
@@ -1016,15 +1159,42 @@ Devuelve JSON EXACTO: {"items":["... · ≈XX €", "..."]} con la misma cantida
   return { items: fixed, valuePerPerson };
 }
 
+function selectedTierFromBody(body = {}) {
+  const tierId = body.tierId || body.tier?.id || "none";
+  if (tierId === "none") {
+    return { id: "none", name: "Solo vuelo + hotel", items: ["Sin actividades sorpresa"], perPersonCost: 0, pricePerPerson: 0, valuePerPerson: 0 };
+  }
+  const base = TIERS.find((t) => t.id === tierId) || TIERS[0];
+  const incoming = body.tier && body.tier.id === tierId ? body.tier : null;
+  const items = Array.isArray(incoming?.items) && incoming.items.length
+    ? incoming.items.filter((it) => typeof it === "string").slice(0, 6)
+    : base.items;
+  const valuePerPerson = Number.isFinite(+incoming?.valuePerPerson)
+    ? clamp(round(+incoming.valuePerPerson), 40, 1200)
+    : Math.max(base.valuePerPerson || 0, items.reduce((a, it) => a + priceOf(it), 0));
+  const pricePerPerson = Number.isFinite(+incoming?.pricePerPerson)
+    ? clamp(round(+incoming.pricePerPerson), 20, 1000)
+    : base.pricePerPerson;
+  const perPersonCost = Number.isFinite(+incoming?.perPersonCost)
+    ? clamp(round(+incoming.perPersonCost), 10, 900)
+    : base.perPersonCost;
+  return {
+    id: base.id,
+    name: base.name,
+    tagline: String(incoming?.tagline || base.tagline).slice(0, 100),
+    items,
+    perPersonCost,
+    pricePerPerson,
+    valuePerPerson,
+  };
+}
+
 app.post("/api/checkout", async (req, res) => {
   try {
     const body = req.body || {};
     const prefs = normalizePrefs(body.prefs || {});
     const dateStr = body.date;
-    const tierId = body.tierId || "esencia";
-    const tier = tierId === "none"
-      ? { id: "none", name: "Solo vuelo + hotel", items: ["Sin actividades sorpresa"], perPersonCost: 0 }
-      : (TIERS.find((t) => t.id === tierId) || TIERS[0]);
+    const tier = selectedTierFromBody(body);
     const picks = Array.isArray(body.destinations) ? body.destinations : [];
 
     if (!dateStr || !picks.length) {
@@ -1154,10 +1324,7 @@ app.post("/api/price", async (req, res) => {
     const body = req.body || {};
     const prefs = normalizePrefs(body.prefs || {});
     const dateStr = body.date;
-    const tierId = body.tierId || "none";
-    const tier = tierId === "none"
-      ? { id: "none", perPersonCost: 0, pricePerPerson: 0 }
-      : (TIERS.find((t) => t.id === tierId) || { perPersonCost: 0, pricePerPerson: 0 });
+    const tier = selectedTierFromBody(body);
     const picks = Array.isArray(body.destinations) ? body.destinations : [];
     if (!dateStr || !picks.length) {
       return res.status(400).json({ ok: false, error: "Faltan datos para el precio" });
