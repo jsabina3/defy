@@ -96,6 +96,15 @@ const PROFILE_LABELS = {
 };
 const profileLabel = (p) => PROFILE_LABELS[p] || "sin especificar";
 
+// Texto legible de las edades del grupo para los prompts de IA. Prefiere la
+// lista de edades por viajero; si no hay, cae a la media.
+const agesLabel = (prefs) => {
+  const ages = (prefs.ages || []).filter((a) => Number.isFinite(a));
+  if (ages.length) return `edades de los viajeros: ${ages.join(", ")}`;
+  if (Number.isFinite(prefs.age)) return `edad media ${prefs.age}`;
+  return null;
+};
+
 // Devuelve la ficha del nivel de viaje elegido (Cómodo / Boutique / Villa).
 const stayInfo = (id) => {
   const t = STAY_TIERS.find((s) => s.id === id) || STAY_TIERS.find((s) => s.recommended) || STAY_TIERS[0];
@@ -220,12 +229,32 @@ function demographicAdjust(dest, prefs) {
       if (t.includes("nightlife")) s += 0.6; // más fácil socializar
       break;
   }
-  const age = prefs.age;
-  if (Number.isFinite(age)) {
-    if (age <= 30) {
+  // Edades de cada viajero: ajustamos según la composición real del grupo, no
+  // solo la media (p. ej. un grupo con un niño y dos adultos, o mixto joven/sénior).
+  const ages = (prefs.ages || []).filter((a) => Number.isFinite(a));
+  if (ages.length) {
+    const hasChild = ages.some((a) => a < 13);
+    const youngShare = ages.filter((a) => a >= 16 && a <= 30).length / ages.length;
+    const seniorShare = ages.filter((a) => a >= 60).length / ages.length;
+    if (hasChild) {
+      if (t.includes("nightlife")) s -= 2.5;
+      if (t.includes("nature") || t.includes("beach")) s += 1.2;
+      if (dest.isHiddenGem) s -= 0.6; // traslados largos cansan más con niños
+    }
+    if (youngShare >= 0.5) {
       if (t.includes("nightlife")) s += 1.2;
       if (t.includes("beach")) s += 0.4;
-    } else if (age >= 55) {
+    }
+    if (seniorShare >= 0.5) {
+      if (t.includes("nightlife")) s -= 1.4;
+      if (t.includes("culture") || t.includes("nature")) s += 0.8;
+    }
+  } else if (Number.isFinite(prefs.age)) {
+    // Sin edades por viajero: usamos la media como antes.
+    if (prefs.age <= 30) {
+      if (t.includes("nightlife")) s += 1.2;
+      if (t.includes("beach")) s += 0.4;
+    } else if (prefs.age >= 55) {
       if (t.includes("nightlife")) s -= 1.4;
       if (t.includes("culture") || t.includes("nature")) s += 0.8;
     }
@@ -422,7 +451,7 @@ Viajero:
 - Sale de: ${origin} (país: ${originCountry})
 - Intereses por prioridad (el 1º pesa más): ${vibesOrdered}
 - Clima: ${prefs.climate || "any"} · Ritmo: ${prefs.pace || "balanced"}
-- Perfil: ${profileLabel(prefs.profile)}${prefs.age ? ` · edad media ${prefs.age}` : ""}
+- Perfil: ${profileLabel(prefs.profile)}${agesLabel(prefs) ? ` · ${agesLabel(prefs)}` : ""}
 - Nivel de alojamiento: ${prefs.stayTier || "boutique"}
 - Noches: ${prefs.nights} · Viajeros: ${prefs.travelers}
 - ¿Acepta joyas escondidas (volar + 1-2 h en coche/tren/ferry hasta el sitio)?: ${prefs.hiddenGems ? "sí" : "no"}
@@ -484,7 +513,7 @@ async function aiMatchReasons(picks, prefs) {
   const user = `Preferencias del viajero (intereses por ORDEN de prioridad, el 1º es el que más importa):
 - Intereses: ${vibesOrdered}
 - Clima: ${prefs.climate || "any"} · Ritmo: ${prefs.pace || "balanced"} · Nivel: ${prefs.stayTier || "boutique"}
-- Perfil: ${profileLabel(prefs.profile)}${prefs.age ? ` · Edad media ${prefs.age}` : ""}
+- Perfil: ${profileLabel(prefs.profile)}${agesLabel(prefs) ? ` · ${agesLabel(prefs)}` : ""}
 
 Destinos ya seleccionados:
 ${JSON.stringify(list)}
@@ -632,6 +661,10 @@ app.post("/api/quote", async (req, res) => {
     const destinations = picks.map((p) => buildDestination(p, prefs));
     await attachImages(destinations);
 
+    // Mínimo por persona (suelo) según los precios encontrados y la configuración
+    // elegida: el cliente fijará su presupuesto por encima de este valor.
+    const minBudget = minBudgetPerPerson(destinations, prefs);
+
     res.json({
       ok: true,
       source: usedAI ? "openai" : "fallback",
@@ -642,6 +675,7 @@ app.post("/api/quote", async (req, res) => {
       stayTiers: STAY_TIERS,
       prefs,
       destinations,
+      minBudgetPerPerson: minBudget,
     });
   } catch (err) {
     console.error("/api/quote failed", err);
@@ -710,6 +744,44 @@ async function destProvider(dest, dateStr, prefs, stayFactor, { live = false } =
 function anchorCharged(providerChargedList, activityChargedTotal) {
   const base = percentile(providerChargedList, PRICING.anchorPercentile);
   return Math.ceil((base + activityChargedTotal) / 10) * 10;
+}
+
+// Versión síncrona del coste-con-margen de proveedor (vuelo + hotel + traslado),
+// idéntica a la del front y a destProvider en modo estimado. Se usa para escanear
+// muchas fechas rápidamente al calcular el presupuesto mínimo.
+function providerChargedSync(dest, dateStr, prefs, stayFactor) {
+  const m = monthIndex(dateStr);
+  const season = dest.seasonality[m];
+  const weekend = isWeekend(dateStr) ? 1 + PRICING.weekendPremium : 1;
+  const nights = prefs.nights;
+  const travelers = prefs.travelers;
+  const rooms = Math.ceil(travelers / PRICING.peoplePerRoom);
+  const flight = dest.flightPerPerson * season * weekend * travelers * PRICING.markups.flight;
+  const hotel = dest.hotelPerNight * stayFactor * season * nights * rooms * PRICING.markups.hotel;
+  const transfer = dest.transferCost * travelers * PRICING.markups.transfer;
+  return flight + hotel + transfer;
+}
+
+// Presupuesto MÍNIMO por persona (vuelo + hotel, sin actividades) que el cliente
+// podría pagar con SU configuración: el precio sorpresa más bajo a lo largo del
+// próximo año, replicando la misma fórmula que el calendario. Es el "suelo" que
+// el sistema define a partir de los precios encontrados y de las opciones
+// elegidas (destinos, noches, viajeros, nivel de alojamiento, ciudad de salida),
+// antes de pedirle al cliente su presupuesto.
+function minBudgetPerPerson(destinations, prefs) {
+  if (!destinations.length) return null;
+  const stayFactor = stayTierFactor(prefs.stayTier);
+  const travelers = prefs.travelers || 1;
+  const startStr = addDays(todayStr(), 10);
+  let min = Infinity;
+  for (let i = 0; i < 365; i++) {
+    const ds = addDays(startStr, i);
+    const all = destinations.map((d) => providerChargedSync(d, ds, prefs, stayFactor));
+    const base = Math.ceil(percentile(all, PRICING.anchorPercentile) / 10) * 10;
+    const per = Math.ceil((base / travelers) / 5) * 5;
+    if (per < min) min = per;
+  }
+  return Number.isFinite(min) ? min : null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -813,7 +885,7 @@ async function aiActivities(dest, tier, prefs = {}) {
     "concreto y al perfil del viajero de forma realista y evocadora, mencionando " +
     "lugares, platos o detalles típicos. Respondes SIEMPRE en JSON válido y en español.";
   const user = `Destino: ${dest.name}, ${dest.region}, ${dest.country}.
-Viajero: ${profileLabel(prefs.profile)}${prefs.age ? `, edad media ${prefs.age}` : ""}. Intereses: ${vibes}.
+Viajero: ${profileLabel(prefs.profile)}${agesLabel(prefs) ? `, ${agesLabel(prefs)}` : ""}. Intereses: ${vibes}.
 Reescribe cada actividad como una experiencia CONCRETA y realista en ${dest.name}, adaptada a ese perfil (p. ej. apta para niños si es familia, romántica si es pareja, animada si son amigos).
 Reglas:
 - Mantén EXACTAMENTE el mismo número de actividades y el mismo orden.
@@ -1029,6 +1101,19 @@ function normalizePrefs(p) {
   const vibes = Array.isArray(p.vibes)
     ? [...new Set(p.vibes.filter((v) => allowedVibes.includes(v)))].slice(0, 6)
     : [];
+  const travelers = clamp(parseInt(p.travelers, 10) || 2, 1, 8);
+  // Edad de CADA viajero (una por viajero). Truncamos al número de viajeros y
+  // dejamos null las que no se hayan rellenado. La media (age) se deriva de las
+  // edades válidas, para mantener compatibilidad con el resto del flujo.
+  const rawAges = Array.isArray(p.ages) ? p.ages : [];
+  const ages = Array.from({ length: travelers }, (_, i) => {
+    const n = parseInt(rawAges[i], 10);
+    return Number.isFinite(n) && n >= 0 ? clamp(n, 0, 99) : null;
+  });
+  const validAges = ages.filter((a) => Number.isFinite(a));
+  const avgAge = validAges.length
+    ? Math.round(validAges.reduce((a, b) => a + b, 0) / validAges.length)
+    : (Number.isFinite(+p.age) && +p.age > 0 ? clamp(parseInt(p.age, 10), 1, 99) : null);
   return {
     departureCity: typeof p.departureCity === "string" ? p.departureCity.slice(0, 60) : "Madrid",
     vibes,
@@ -1036,12 +1121,13 @@ function normalizePrefs(p) {
     pace: ["relax", "balanced", "adventure"].includes(p.pace) ? p.pace : "balanced",
     // Perfil del viajero: con quién viaja. Ajusta destinos y actividades.
     profile: ["solo", "pareja", "amigos", "familia"].includes(p.profile) ? p.profile : null,
-    // Edad media del grupo (orientativa). Modula destinos y experiencias.
-    age: Number.isFinite(+p.age) && +p.age > 0 ? clamp(parseInt(p.age, 10), 1, 99) : null,
+    // Edad de cada viajero + media derivada (orientativa).
+    ages,
+    age: avgAge,
     stayTier: allowedStay.includes(p.stayTier) ? p.stayTier : "boutique",
-    travelers: clamp(parseInt(p.travelers, 10) || 2, 1, 8),
+    travelers,
     nights: clamp(parseInt(p.nights, 10) || 2, 1, 6),
-    budget: Number.isFinite(+p.budget) && +p.budget > 0 ? clamp(+p.budget, 150, 20000) : null,
+    budget: Number.isFinite(+p.budget) && +p.budget > 0 ? clamp(+p.budget, 50, 20000) : null,
     hiddenGems: p.hiddenGems !== false,
     discarded: Array.isArray(p.discarded) ? p.discarded.slice(0, 30) : [],
   };

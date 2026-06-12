@@ -70,10 +70,11 @@
           <button type="button" class="choice" data-profile="familia">👨‍👩‍👧 Familia</button>
         </div>
 
-        <label class="field">
-          <span>Edad media del grupo</span>
-          <input id="age" type="number" min="1" max="99" placeholder="p. ej. 32" inputmode="numeric" />
-        </label>
+        <div class="field ages-field">
+          <span class="field-label" style="margin-top:0">Edad de cada viajero</span>
+          <p class="quiz-hint">Afinamos destinos y experiencias para cada persona del grupo.</p>
+          <div class="ages-grid" id="agesGrid"></div>
+        </div>
 
         <span class="field-label">Duración (escapada corta)</span>
         <div class="choice-row" id="nightsChoice">
@@ -176,6 +177,29 @@
       <p id="loadingText">Cruzando destinos, vuelos, hoteles, noches y temporada para tus fechas…</p>
     </div>
 
+    <!-- PRESUPUESTO (antes del calendario y los destinos) -->
+    <div class="budget-gate card" id="budgetGate" hidden>
+      <p class="quiz-kicker">Antes de empezar</p>
+      <h3 class="quiz-q">¿Cuánto quieres gastar, aproximadamente, por persona?</h3>
+      <p class="quiz-hint">Es solo una referencia para guiarte por el calendario. Vuelo + hotel, sin actividades. Podrás cambiarla cuando quieras.</p>
+
+      <div class="budget-min" id="budgetMin"></div>
+
+      <label class="field budget-input-field">
+        <span>Tu presupuesto aproximado por persona</span>
+        <div class="budget-input-wrap">
+          <input id="budgetInput" type="number" inputmode="numeric" step="10" />
+          <span class="budget-unit">€ / persona</span>
+        </div>
+        <small class="budget-error" id="budgetError" hidden></small>
+      </label>
+
+      <div class="quiz-nav">
+        <button type="button" class="btn btn-ghost" id="budgetBack">← Cambiar preferencias</button>
+        <button type="button" class="btn btn-primary" id="budgetContinue">Ver calendario y destinos →</button>
+      </div>
+    </div>
+
     <!-- RESULTS (3 páginas: calendario · destinos · experiencia) -->
     <div class="results" id="results" hidden>
       <div class="results-head">
@@ -205,6 +229,7 @@
               <button id="calNext" aria-label="Mes siguiente">›</button>
             </div>
           </div>
+          <p class="cal-budget" id="calBudget" hidden></p>
           <div class="cal-weekdays">
             <span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span>
           </div>

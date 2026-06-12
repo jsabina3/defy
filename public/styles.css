@@ -336,6 +336,35 @@ em {
 .stepper button:hover { background: var(--canvas); }
 .stepper input { border: none; text-align: center; width: 60px; font-weight: 600; }
 
+/* Edad por viajero */
+.ages-field { display: block; }
+.ages-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0.7rem; }
+.age-cell { display: flex; flex-direction: column; gap: 0.3rem; }
+.age-cell span { font-weight: 600; font-size: 0.82rem; color: var(--ink-soft); }
+.age-cell input {
+  font-family: var(--sans); font-size: 1rem; padding: 0.7rem 0.8rem; text-align: center;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--field-bg); color: var(--ink);
+}
+
+/* Presupuesto por persona (gate antes del calendario) */
+.budget-gate { max-width: 620px; margin: 0 auto; animation: fadeUp 0.45s ease; }
+.budget-min {
+  display: flex; flex-direction: column; gap: 0.25rem;
+  border-left: 3px solid var(--teal, var(--coral)); padding: 0.7rem 1rem; margin-bottom: 1.4rem;
+  background: var(--field-bg); border-radius: var(--radius-sm); font-size: 0.95rem;
+}
+.budget-min b { color: var(--coral); }
+.budget-min small { color: var(--ink-soft); font-size: 0.82rem; }
+.budget-min-ic { color: var(--coral); font-weight: 800; margin-right: 0.3rem; }
+.budget-input-field { display: block; }
+.budget-input-wrap { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.45rem; }
+.budget-input-wrap input {
+  font-family: var(--sans); font-size: 1.3rem; font-weight: 700; padding: 0.8rem 1rem; width: 180px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--field-bg); color: var(--ink);
+}
+.budget-unit { color: var(--ink-soft); font-weight: 600; }
+.budget-error { display: block; color: #ff8a73; font-size: 0.85rem; margin-top: 0.5rem; }
+
 .choice-row { display: flex; flex-wrap: wrap; gap: 0.7rem; }
 .choice {
   flex: 1; min-width: 110px; padding: 0.9rem 1rem; border: 1px solid var(--line); border-radius: var(--radius-sm);
@@ -497,6 +526,11 @@ em {
 .cal-cell.mid .cal-price { color: var(--gold); }
 .cal-cell.high .cal-price { color: var(--coral); }
 /* Rango del viaje: todos los días que abarca la escapada elegida */
+/* Día por encima del presupuesto elegido: se atenúa pero sigue seleccionable. */
+.cal-cell.avail.over-budget { opacity: 0.4; }
+.cal-cell.avail.over-budget:hover { opacity: 0.7; }
+.cal-cell.avail.over-budget.selected { opacity: 1; }
+
 .cal-cell.in-range { background: rgba(255,106,61,0.16); border-color: rgba(255,106,61,0.45); }
 .cal-cell.in-range .cal-day { color: #fff; }
 .cal-cell.range-end { box-shadow: inset 0 0 0 1.5px var(--coral); }
@@ -508,6 +542,12 @@ em {
   font-size: 0.88rem; color: var(--ink-soft); text-align: center;
 }
 .cal-trip b { color: var(--ink); text-transform: capitalize; }
+.cal-budget {
+  font-size: 0.85rem; color: var(--ink-soft); margin: 0 0 0.9rem; padding: 0.55rem 0.9rem;
+  background: var(--field-bg); border-radius: var(--radius-sm); text-align: center;
+}
+.cal-budget b { color: var(--ink); }
+.cal-budget-edit { background: none; border: none; color: var(--coral); font: inherit; font-weight: 700; cursor: pointer; padding: 0; text-decoration: underline; }
 .cal-legend { font-size: 0.78rem; color: var(--ink-soft); margin-top: 1.2rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; justify-content: center; }
 .cal-legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .dot-low { background: #5fd897; } .dot-mid { background: var(--gold); } .dot-high { background: var(--coral); }

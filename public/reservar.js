@@ -9,11 +9,13 @@ const state = {
     climate: "any",
     pace: "balanced",
     profile: null,      // con quién viaja: solo · pareja · amigos · familia
-    age: null,          // edad media del grupo (orientativa)
+    ages: [],           // edad de CADA viajero (una por viajero)
+    budget: null,       // presupuesto aproximado por persona (lo fija el cliente)
     stayTier: "boutique", // nivel de viaje: comodo · boutique · villa
     hiddenGems: true,
   },
   quote: null,        // respuesta de /api/quote
+  minBudget: null,    // mínimo por persona que calcula el servidor (precios + config)
   discarded: new Set(),
   selectedDate: null, // 'YYYY-MM-DD'
   selectedTier: "none", // arranca en "solo vuelo + hotel"; el nivel se elige en el paso 3
@@ -74,6 +76,7 @@ $$("[data-step-btn]").forEach((b) => b.addEventListener("click", () => {
   let v = +input.value + (b.dataset.stepBtn === "inc" ? 1 : -1);
   v = Math.max(1, Math.min(8, v));
   input.value = v; state.prefs.travelers = v;
+  renderAges();
 }));
 
 // Duración
@@ -92,11 +95,29 @@ $$("#profileChoice .choice").forEach((c) => c.addEventListener("click", () => {
   state.prefs.profile = c.dataset.profile;
 }));
 
-// Edad media del grupo
-$("#age").addEventListener("input", (e) => {
-  const v = parseInt(e.target.value, 10);
-  state.prefs.age = Number.isFinite(v) && v > 0 ? Math.max(1, Math.min(99, v)) : null;
-});
+// Edad de cada viajero: un campo por viajero. Se regenera al cambiar el número
+// de viajeros, conservando las edades ya introducidas.
+function renderAges() {
+  const grid = $("#agesGrid");
+  if (!grid) return;
+  const n = state.prefs.travelers;
+  const prev = state.prefs.ages || [];
+  state.prefs.ages = Array.from({ length: n }, (_, i) => prev[i] ?? null);
+  grid.innerHTML = "";
+  for (let i = 0; i < n; i++) {
+    const cell = document.createElement("label");
+    cell.className = "age-cell";
+    const val = state.prefs.ages[i];
+    cell.innerHTML = `<span>Viajero ${i + 1}</span>
+      <input type="number" min="0" max="99" inputmode="numeric" placeholder="edad" data-age-idx="${i}" value="${val ?? ""}" />`;
+    grid.appendChild(cell);
+  }
+  $$("#agesGrid input").forEach((inp) => inp.addEventListener("input", (e) => {
+    const idx = +e.target.dataset.ageIdx;
+    const v = parseInt(e.target.value, 10);
+    state.prefs.ages[idx] = Number.isFinite(v) && v >= 0 ? Math.max(0, Math.min(99, v)) : null;
+  }));
+}
 
 // Vibes por ORDEN de prioridad: el orden de click es la prioridad.
 const VIBE_LABELS = {
@@ -172,6 +193,7 @@ async function submitQuiz() {
   $("#quiz").hidden = true;
   $("#loading").hidden = false;
   $("#results").hidden = true;
+  $("#budgetGate").hidden = true;
   try {
     const res = await fetch("/api/quote", {
       method: "POST",
@@ -182,15 +204,16 @@ async function submitQuiz() {
     if (!data.ok) throw new Error(data.error || "Error");
     state.quote = data;
     state.prefs = data.prefs; // normalizado por el servidor
+    state.minBudget = Number.isFinite(data.minBudgetPerPerson) ? data.minBudgetPerPerson : null;
     state.discarded = new Set();
     state.selectedDate = null;
     Object.keys(priceCache).forEach((k) => delete priceCache[k]);
     state.selectedTier = "none";
     state.calMonth = startMonth(minDate());
-    renderResults();
     $("#loading").hidden = true;
-    $("#results").hidden = false;
-    $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+    // Antes de mostrar calendario y destinos, pedimos un presupuesto por persona
+    // (con el mínimo que el servidor ha calculado según precios y configuración).
+    showBudgetGate();
   } catch (err) {
     $("#loading").hidden = true;
     $("#quiz").hidden = false;
@@ -199,8 +222,74 @@ async function submitQuiz() {
   }
 }
 
+/* ===================== Presupuesto por persona ===================== */
+function showBudgetGate() {
+  const gate = $("#budgetGate");
+  const minEl = $("#budgetMin");
+  const input = $("#budgetInput");
+  const err = $("#budgetError");
+  const min = state.minBudget;
+  const stay = (state.quote.stayTiers || []).find((t) => t.id === state.prefs.stayTier);
+  const stayName = stay ? stay.name : "";
+  const cfg = `${state.prefs.travelers} ${state.prefs.travelers > 1 ? "viajeros" : "viajero"} · ${state.prefs.nights + 1} días${stayName ? " · " + stayName : ""} · salida desde ${state.prefs.departureCity}`;
+
+  if (Number.isFinite(min)) {
+    minEl.innerHTML = `<span class="budget-min-ic">▼</span> Mínimo para tu configuración: <b>${euro(min)}/persona</b>
+      <small>${cfg}. Es lo más bajo que hemos encontrado (vuelo + hotel) con tus opciones.</small>`;
+    minEl.hidden = false;
+    input.min = min;
+    input.placeholder = `mínimo ${Math.round(min)}`;
+    // Sugerimos un valor cómodo por encima del mínimo si aún no hay uno.
+    if (!Number.isFinite(state.prefs.budget) || state.prefs.budget < min) {
+      input.value = Math.round(min * 1.25 / 10) * 10;
+    } else {
+      input.value = state.prefs.budget;
+    }
+  } else {
+    minEl.hidden = true;
+    input.min = 0;
+    input.placeholder = "p. ej. 400";
+    if (Number.isFinite(state.prefs.budget)) input.value = state.prefs.budget;
+  }
+  if (err) err.hidden = true;
+  $("#summaryBar").hidden = true;
+  gate.hidden = false;
+  gate.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+$("#budgetContinue").addEventListener("click", () => {
+  const input = $("#budgetInput");
+  const err = $("#budgetError");
+  const min = state.minBudget;
+  const val = parseInt(input.value, 10);
+  if (!Number.isFinite(val) || val <= 0) {
+    err.textContent = "Indica un presupuesto aproximado por persona.";
+    err.hidden = false;
+    return;
+  }
+  if (Number.isFinite(min) && val < min) {
+    err.textContent = `Con tu configuración el mínimo es ${euro(min)}/persona. Sube el presupuesto o cambia tus preferencias.`;
+    err.hidden = false;
+    return;
+  }
+  err.hidden = true;
+  state.prefs.budget = val;
+  $("#budgetGate").hidden = true;
+  renderResults();
+  $("#results").hidden = false;
+  $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+$("#budgetBack").addEventListener("click", () => {
+  $("#budgetGate").hidden = true;
+  $("#quiz").hidden = false;
+  $("#summaryBar").hidden = true;
+  $("#quiz").scrollIntoView({ behavior: "smooth", block: "center" });
+});
+
 $("#editPrefs").addEventListener("click", () => {
   $("#results").hidden = true;
+  $("#budgetGate").hidden = true;
   $("#quiz").hidden = false;
   $("#summaryBar").hidden = true;
   $("#quiz").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -481,6 +570,19 @@ function renderCalendar() {
   const month = state.calMonth;
   $("#calMonth").textContent = month.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
 
+  // Banner del presupuesto elegido: los días por encima se atenúan en gris.
+  const budgetEl = $("#calBudget");
+  if (budgetEl) {
+    if (Number.isFinite(state.prefs.budget)) {
+      budgetEl.hidden = false;
+      budgetEl.innerHTML = `💶 Tu presupuesto: <b>${euro(state.prefs.budget)}/persona</b> · <button type="button" class="cal-budget-edit" id="calBudgetEdit">cambiar</button> · los días por encima aparecen atenuados.`;
+      const editBtn = $("#calBudgetEdit");
+      if (editBtn) editBtn.addEventListener("click", () => { $("#results").hidden = true; showBudgetGate(); });
+    } else {
+      budgetEl.hidden = true;
+    }
+  }
+
   // El calendario muestra SIEMPRE el precio base "vuelo + hotel" (sin actividades).
   // El nivel de experiencia se elige en el paso 3 y se suma en el resumen/total.
   const tier = { perPersonCost: 0, pricePerPerson: 0 };
@@ -518,6 +620,7 @@ function renderCalendar() {
       const per = surpriseCharged(ds, tier) / state.prefs.travelers;
       const level = per <= q1 ? "low" : per <= q2 ? "mid" : "high";
       let cls = `cal-cell avail ${level}`;
+      if (Number.isFinite(state.prefs.budget) && roundUpTo(per, 5) > state.prefs.budget) cls += " over-budget";
       if (range && range.set.has(ds)) {
         cls += " in-range";
         if (ds === range.start) cls += " range-start";
@@ -569,7 +672,9 @@ function updateSummary() {
   const d = new Date(state.selectedDate + "T12:00:00");
   const dateLabel = d.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "long" });
   const feeNote = fee > 0 ? ` · cambio de destino +${euro(fee)}` : "";
-  $("#summaryLine").textContent = `${dateLabel} · ${state.prefs.travelers} viajeros · ${stayName ? stayName + " · " : ""}${tierName}${feeNote}`;
+  const overBudget = Number.isFinite(state.prefs.budget) && per > state.prefs.budget;
+  const budgetNote = overBudget ? ` · ⚠️ sobre tu presupuesto (${euro(state.prefs.budget)}/p)` : "";
+  $("#summaryLine").textContent = `${dateLabel} · ${state.prefs.travelers} viajeros · ${stayName ? stayName + " · " : ""}${tierName}${feeNote}${budgetNote}`;
   $("#summaryTotal").textContent = euro(total);
   $("#summaryPer").textContent = `· ${euro(per)}/persona`;
   updateResultNav();
@@ -853,4 +958,5 @@ $("#overlayClose").addEventListener("click", closeOverlay);
 $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeOverlay(); });
 
 /* ===================== Init ===================== */
+renderAges();
 showStep(0);
