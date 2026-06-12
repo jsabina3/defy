@@ -50,8 +50,9 @@ app.use(express.static(path.join(__dirname, "public")));
 const PORT = process.env.PORT || 3000;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
+const ESTIMATE_MODEL = process.env.ESTIMATE_MODEL || "gpt-5.4-nano";
 // Los modelos GPT-5.x no admiten temperature personalizada y usan reasoning_effort.
-const IS_GPT5 = /^gpt-5/.test(OPENAI_MODEL);
+const isGpt5Model = (model) => /^gpt-5/.test(model);
 
 /* ------------------------------------------------------------------ */
 /* Utilidades                                                          */
@@ -306,6 +307,13 @@ function matchesVibes(dest, vibes) {
   if (!vibes || !vibes.length) return true;
   return vibes.some((v) => dest.tags.includes(v));
 }
+// ¿Encaja con las dos máximas prioridades? Con dos intereses marcados, el destino
+// debe tener AMBOS en tags; con uno solo, ese; sin intereses, todo encaja.
+function matchesTopVibes(dest, vibes) {
+  const top = (vibes || []).slice(0, 2).filter(Boolean);
+  if (!top.length) return true;
+  return top.every((v) => dest.tags.includes(v));
+}
 // ¿Encaja con el clima pedido? "any" no filtra. Permitimos adyacencias suaves
 // (templado sirve para quien pide cálido o fresco) para no excluir de más.
 function matchesClimate(dest, climate) {
@@ -315,18 +323,15 @@ function matchesClimate(dest, climate) {
   return false;
 }
 
-// Selecciona SIEMPRE N destinos (por defecto 10). Los destinos DEBEN encajar con
-// las preferencias del viajero: trabajamos por capas de exigencia, de la más
-// estricta a la más laxa, y solo bajamos de capa cuando no hay suficientes
-// destinos que cumplan (es decir, cuando las preferencias son incompatibles
-// entre sí). Dentro de cada capa priorizamos una banda de precio comparable
-// para que no haya destinos mucho más baratos que otros.
+// Selecciona SIEMPRE N destinos (por defecto 6). Todos deben encajar con las dos
+// máximas prioridades (ambas en tags). Si no hay suficientes, solo relajamos clima;
+// nunca metemos destinos que no cumplan las dos primeras prioridades.
 function selectDestinations(prefs, sourcePool = CATALOG, n = PRICING.destinationsShown) {
   const discarded = new Set(prefs.discarded || []);
   const origin = originCountryOf(prefs.departureCity);
   const stayFactor = stayTierFactor(prefs.stayTier);
   const vibes = prefs.vibes || [];
-  const topVibe = vibes[0];
+  const topVibes = vibes.slice(0, 2).filter(Boolean);
 
   const pool = sourcePool
     .filter((d) => !discarded.has(d.id))
@@ -337,25 +342,13 @@ function selectDestinations(prefs, sourcePool = CATALOG, n = PRICING.destination
     .map((d) => ({ d, s: scoreDestination(d, prefs), ref: referenceCharged(d, prefs, stayFactor) }))
     .sort((a, b) => b.s - a.s);
 
-  // Capas que SÍ encajan con las preferencias, de la más estricta a la más laxa:
-  //  1) Interés PRINCIPAL (1ª prioridad) + clima.
-  //  2) Cualquier interés marcado + clima.
-  //  3) Cualquier interés marcado (clima relajado, p. ej. playa en clima fresco).
-  // Todas exigen compartir al menos un interés: ningún destino de estas capas
-  // "no matchea". Solo si entre las tres no llegamos al mínimo (preferencias muy
-  // estrechas o incompatibles) recurrimos al comodín de relleno más abajo.
-  const matchLayers = [
-    scored.filter((x) => (!topVibe || x.d.tags.includes(topVibe)) && matchesClimate(x.d, prefs.climate)),
-    scored.filter((x) => matchesVibes(x.d, vibes) && matchesClimate(x.d, prefs.climate)),
-    scored.filter((x) => matchesVibes(x.d, vibes)),
-  ];
+  const onTopic = scored.filter((x) => matchesTopVibes(x.d, vibes));
 
   const chosen = [];
   const ids = new Set();
   const add = (x) => { if (!ids.has(x.d.id)) { chosen.push(x); ids.add(x.d.id); } };
   const fill = (layer, cap) => {
     if (!layer.length) return;
-    // Dentro de la capa, primero los que caen en la banda de precio comparable.
     const med = percentile(layer.map((x) => x.ref), 0.5) || 0;
     const lo = med * PRICING.bandLow;
     const hi = med * PRICING.bandHigh;
@@ -369,18 +362,20 @@ function selectDestinations(prefs, sourcePool = CATALOG, n = PRICING.destination
     }
   };
 
-  // Mostramos TODOS los destinos que encajan (hasta el tope), sin rellenar con
-  // destinos que no encajen.
+  const matchLayers = [
+    onTopic.filter((x) => matchesClimate(x.d, prefs.climate)),
+    onTopic,
+  ];
   for (const layer of matchLayers) {
     if (chosen.length >= n) break;
     fill(layer, n);
   }
 
-  // Suelo de seguridad: si las preferencias dejan muy pocos destinos válidos,
-  // completamos con los mejores aunque no encajen, para que la experiencia
-  // (calendario, precio sorpresa, descartes) siga funcionando.
   const min = Math.min(PRICING.destinationsMin || 0, scored.length);
-  if (chosen.length < min) fill(scored, min);
+  if (chosen.length < min) {
+    if (topVibes.length >= 2) fill(onTopic, min);
+    else fill(scored, min);
+  }
 
   return chosen.slice(0, n).map(({ d }) => ({ id: d.id, matchReason: null, flightPerPerson: null, hotelPerNight: null }));
 }
@@ -388,20 +383,20 @@ function selectDestinations(prefs, sourcePool = CATALOG, n = PRICING.destination
 /* ------------------------------------------------------------------ */
 /* OpenAI                                                              */
 /* ------------------------------------------------------------------ */
-async function openaiJSON(system, user, { timeoutMs = 28000, temperature = 0.7 } = {}) {
+async function openaiJSON(system, user, { timeoutMs = 28000, temperature = 0.7, model = OPENAI_MODEL } = {}) {
   if (!OPENAI_API_KEY) return null;
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const payload = {
-      model: OPENAI_MODEL,
+      model,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
     };
-    if (IS_GPT5) payload.reasoning_effort = "low";
+    if (isGpt5Model(model)) payload.reasoning_effort = "low";
     else payload.temperature = temperature;
 
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -460,6 +455,7 @@ Reglas IMPORTANTES (filosofía "que no dé bajona"):
 - NO repitas el país de origen (${originCountry}).
 - Prioriza destinos que MEREZCAN el viaje por tres ejes: (1) DISTANCIA: que se sienta una escapada de verdad, no algo a un paso; (2) ATRACTIVO: factor "wow"; (3) DESCONOCIMIENTO: poco trillado/sorprendente para alguien de ${originCountry}. Ejemplo: para alguien de Madrid, Oporto resulta cercano y muy trillado: penalízalo frente a destinos más lejanos y diferentes.
 - Respeta clima e intereses y adapta al perfil/edad (familia: evita fiesta, favorece naturaleza/playa; pareja: romántico; amigos: animado; sénior: cultura/naturaleza).
+- Cada destino debe incluir en "tags" las DOS primeras prioridades de interés (ambas obligatorias en cada destino).
 - ${prefs.hiddenGems ? "Puedes incluir joyas escondidas (isHiddenGem=true y describe el traslado en 'transfer')." : "NO incluyas joyas escondidas: todas isHiddenGem=false y sin traslados largos."}
 - Mezcla precios pero sin opciones desproporcionadamente baratas respecto al resto.
 
@@ -640,8 +636,8 @@ app.post("/api/quote", async (req, res) => {
     let pool = CATALOG;
     let aiDestins = false;
     if (OPENAI_API_KEY) {
-      const ai = await aiDestinations(prefs, 14);
-      if (ai && ai.length >= 4) {
+      const ai = await aiDestinations(prefs, 10);
+      if (ai && ai.length >= 6) {
         pool = ai;
         aiDestins = true;
         for (const d of pool) {
@@ -783,6 +779,109 @@ function minBudgetPerPerson(destinations, prefs) {
   }
   return Number.isFinite(min) ? min : null;
 }
+
+function estimateRangePerPerson(destinations, prefs) {
+  if (!destinations.length) return null;
+  const stayFactor = stayTierFactor(prefs.stayTier);
+  const travelers = prefs.travelers || 1;
+  const startStr = addDays(todayStr(), 10);
+  const prices = [];
+  for (let i = 0; i < 180; i++) {
+    const ds = addDays(startStr, i);
+    const all = destinations.map((d) => providerChargedSync(d, ds, prefs, stayFactor));
+    const total = anchorCharged(all, 0);
+    prices.push(Math.ceil((total / travelers) / 5) * 5);
+  }
+  prices.sort((a, b) => a - b);
+  const at = (q) => prices[Math.min(prices.length - 1, Math.max(0, Math.floor((prices.length - 1) * q)))] || 0;
+  return {
+    low: at(0.18),
+    typical: at(0.50),
+    high: at(0.78),
+  };
+}
+
+function estimatePrefsCompleteness(prefs) {
+  let score = 0;
+  if (prefs.departureCity) score += 1;
+  if (prefs.travelers) score += 1;
+  if (prefs.nights) score += 1;
+  if (prefs.profile) score += 1;
+  if ((prefs.ages || []).some((a) => Number.isFinite(a))) score += 1;
+  if ((prefs.vibes || []).length) score += 1;
+  if (prefs.stayTier) score += 1;
+  if (prefs.climate && prefs.climate !== "any") score += 1;
+  if (prefs.pace) score += 1;
+  return Math.min(1, score / 9);
+}
+
+async function aiEstimateCopy(prefs, range, step) {
+  const fallback = {
+    headline: `Entre ${range.low} y ${range.high} €/persona`,
+    note: "La cifra se afinará al elegir destinos y fecha.",
+    drivers: [],
+    confidence: estimatePrefsCompleteness(prefs) > 0.65 ? "media" : "baja",
+  };
+  if (!OPENAI_API_KEY) return fallback;
+
+  const stay = stayInfo(prefs.stayTier);
+  const system =
+    "Eres un estimador de precio para un configurador de viajes sorpresa. " +
+    "Explicas rangos de precio de forma breve, clara y honesta. Respondes SIEMPRE en JSON válido.";
+  const user = `Genera una micro-estimación en español para el paso ${step + 1} del configurador.
+
+Datos:
+- Salida: ${prefs.departureCity}
+- Viajeros: ${prefs.travelers}
+- Noches: ${prefs.nights}
+- Perfil: ${profileLabel(prefs.profile)}${agesLabel(prefs) ? ` · ${agesLabel(prefs)}` : ""}
+- Intereses por prioridad: ${(prefs.vibes || []).join(", ") || "sin marcar"}
+- Clima: ${prefs.climate || "any"} · Ritmo: ${prefs.pace || "balanced"}
+- Alojamiento: ${stay.name} (${stay.stayType})
+- Rango calculado por el motor: bajo ${range.low} €/persona, típico ${range.typical} €/persona, alto ${range.high} €/persona.
+
+Reglas:
+- No inventes precios fuera del rango calculado.
+- No pidas presupuesto.
+- No menciones un destino concreto: aún es sorpresa.
+- Si mencionas ${prefs.departureCity}, debe quedar claro que es la ciudad de salida, no el destino.
+- Máximo 1 frase en headline, 1 frase en note y 2 drivers.
+- Tono de producto premium, directo.
+
+Devuelve JSON EXACTO:
+{"headline":"","note":"","drivers":["",""],"confidence":"baja|media|alta"}`;
+  const out = await openaiJSON(system, user, { timeoutMs: 9000, temperature: 0.4, model: ESTIMATE_MODEL });
+  if (!out || typeof out !== "object") return fallback;
+  return {
+    headline: fallback.headline,
+    note: typeof out.note === "string" ? out.note.slice(0, 180) : fallback.note,
+    drivers: Array.isArray(out.drivers) ? out.drivers.filter((d) => typeof d === "string").slice(0, 2) : [],
+    confidence: ["baja", "media", "alta"].includes(out.confidence) ? out.confidence : fallback.confidence,
+  };
+}
+
+app.post("/api/estimate", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const prefs = normalizePrefs(body.prefs || {});
+    const step = clamp(parseInt(body.step, 10) || 0, 0, 3);
+    const picks = selectDestinations(prefs, CATALOG, PRICING.destinationsShown);
+    const destinations = picks.map((p) => buildDestination(p, prefs));
+    const range = estimateRangePerPerson(destinations, prefs);
+    if (!range) return res.status(400).json({ ok: false, error: "No hay datos para estimar" });
+    const copy = await aiEstimateCopy(prefs, range, step);
+    res.json({
+      ok: true,
+      currency: PRICING.currency,
+      model: OPENAI_API_KEY ? ESTIMATE_MODEL : "fallback",
+      range,
+      copy,
+    });
+  } catch (err) {
+    console.error("/api/estimate failed", err);
+    res.status(500).json({ ok: false, error: "No se pudo estimar el precio" });
+  }
+});
 
 /* ------------------------------------------------------------------ */
 /* Checkout: revela vuelo + hotel asignados y el margen               */
@@ -952,8 +1051,8 @@ app.post("/api/checkout", async (req, res) => {
     // Precio sorpresa = ancla sobre el pool completo + actividades.
     let chargedTotal = anchorCharged(pricedPool.map((x) => x.price.charged), activityChargedTotal);
 
-    // Tarifa por cambiar destinos: 1º descarte gratis, 2º = 10 €/persona (máx. 2).
-    const discards = clamp(parseInt(body.discards, 10) || 0, 0, 2);
+    // Tarifa por cambiar destinos: 1 descarte gratis por viaje (máx. 1).
+    const discards = clamp(parseInt(body.discards, 10) || 0, 0, 1);
     const swapFee = Math.max(0, discards - 1) * 10 * prefs.travelers;
     chargedTotal += swapFee;
 
@@ -1075,7 +1174,7 @@ app.post("/api/price", async (req, res) => {
     );
     let total = anchorCharged(priced.map((p) => p.charged), activityChargedTotal);
 
-    const discards = clamp(parseInt(body.discards, 10) || 0, 0, 2);
+    const discards = clamp(parseInt(body.discards, 10) || 0, 0, 1);
     const swapFee = Math.max(0, discards - 1) * 10 * prefs.travelers;
     total += swapFee;
 

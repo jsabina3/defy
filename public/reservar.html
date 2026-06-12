@@ -37,6 +37,14 @@
     <!-- QUIZ -->
     <div class="quiz card" id="quiz">
       <div class="quiz-progress"><span id="quizBar"></span></div>
+      <div class="live-estimate" id="liveEstimate">
+        <div>
+          <span class="live-estimate-kicker">Estimación por persona</span>
+          <strong id="estimateHeadline">Calculando rango orientativo…</strong>
+          <p id="estimateNote">Se actualiza al cambiar viajeros, noches, nivel de viaje o preferencias.</p>
+        </div>
+        <div class="live-estimate-price" id="estimateRange">—</div>
+      </div>
 
       <!-- Paso 1 -->
       <div class="quiz-step is-active" data-step="0">
@@ -177,7 +185,7 @@
       <p id="loadingText">Cruzando destinos, vuelos, hoteles, noches y temporada para tus fechas…</p>
     </div>
 
-    <!-- PRESUPUESTO (antes del calendario y los destinos) -->
+    <!-- PRESUPUESTO (se conserva oculto como fallback interno; el flujo principal usa estimación viva) -->
     <div class="budget-gate card" id="budgetGate" hidden>
       <p class="quiz-kicker">Antes de empezar</p>
       <h3 class="quiz-q">¿Cuánto quieres gastar, aproximadamente, por persona?</h3>
@@ -242,7 +250,7 @@
       <!-- Página 2 · Destinos -->
       <section class="result-step" data-rstep="1">
         <h3 class="results-title">Destinos que pueden tocarte</h3>
-        <p class="results-sub">Puedes descartar hasta <b>2 destinos</b>: el primero gratis y el segundo por <b>10 €/persona</b>. El precio se recalcula con los que sigan activos.</p>
+        <p class="results-sub">Puedes descartar <b>1 destino</b> gratis. El precio se recalcula con los que sigan activos.</p>
         <div class="dest-grid" id="destGrid"></div>
       </section>
 

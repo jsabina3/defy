@@ -30,8 +30,8 @@ export const PRICING = {
   anchorPercentile: 0.40, // por debajo de la mediana => precio lo más competitivo posible, dejando margen al asignar el destino más barato
   bandLow: 0.72,         // ningún destino por debajo del 72 % de la mediana del pool
   bandHigh: 1.42,        // ni por encima del 142 %
-  destinationsShown: 10, // tope de destinos a mostrar cuando hay encaje de sobra
-  destinationsMin: 5,    // suelo: si las preferencias encajan con MENOS de estos,
+  destinationsShown: 6,  // destinos mostrados al viajero
+  destinationsMin: 6,    // suelo: si las preferencias encajan con MENOS de estos,
                          // completamos con los mejores aunque no encajen del todo
                          // (preferencias muy estrechas / incompatibles entre sí)
 };

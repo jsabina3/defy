@@ -28,16 +28,17 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const euro = (n) => new Intl.NumberFormat("es-ES").format(Math.round(n)) + " €";
 const roundUpTo = (n, step) => Math.ceil(n / step) * step;
 
-/* Reglas de descarte: hasta 2 destinos; el 1º gratis, el 2º +10 €/persona. */
-const MAX_DISCARDS = 2;
-const DISCARD_FEE_PP = 10;
+/* Reglas de descarte: 1 destino gratis por viaje. */
+const MAX_DISCARDS = 1;
 function discardFeeTotal() {
-  return Math.max(0, state.discarded.size - 1) * DISCARD_FEE_PP * state.prefs.travelers;
+  return 0;
 }
 
 /* Caché de precios en firme (clave: fecha|tier|descartes|destinos activos) */
 const priceCache = {};
 let priceReqSeq = 0;
+let estimateTimer = null;
+let estimateReqSeq = 0;
 function priceKey() {
   return [
     state.selectedDate, state.selectedTier, state.discarded.size,
@@ -63,6 +64,7 @@ function showStep(n) {
   quizBar.style.width = ((n + 1) / STEPS) * 100 + "%";
   prevBtn.disabled = n === 0;
   nextBtn.textContent = n === STEPS - 1 ? "Ver mis destinos y precios" : "Siguiente";
+  scheduleLiveEstimate(80);
 }
 prevBtn.addEventListener("click", () => state.step > 0 && showStep(state.step - 1));
 nextBtn.addEventListener("click", () => {
@@ -77,22 +79,28 @@ $$("[data-step-btn]").forEach((b) => b.addEventListener("click", () => {
   v = Math.max(1, Math.min(8, v));
   input.value = v; state.prefs.travelers = v;
   renderAges();
+  scheduleLiveEstimate();
 }));
 
 // Duración
 $$("#nightsChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#nightsChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected"); state.prefs.nights = +c.dataset.nights;
+  scheduleLiveEstimate();
 }));
 
 // Ciudad
-$("#departureCity").addEventListener("change", (e) => state.prefs.departureCity = e.target.value);
+$("#departureCity").addEventListener("change", (e) => {
+  state.prefs.departureCity = e.target.value;
+  scheduleLiveEstimate();
+});
 
 // Perfil del viajero (con quién viaja)
 $$("#profileChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#profileChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected");
   state.prefs.profile = c.dataset.profile;
+  scheduleLiveEstimate();
 }));
 
 // Edad de cada viajero: un campo por viajero. Se regenera al cambiar el número
@@ -116,6 +124,7 @@ function renderAges() {
     const idx = +e.target.dataset.ageIdx;
     const v = parseInt(e.target.value, 10);
     state.prefs.ages[idx] = Number.isFinite(v) && v >= 0 ? Math.max(0, Math.min(99, v)) : null;
+    scheduleLiveEstimate();
   }));
 }
 
@@ -154,6 +163,7 @@ $$("#vibes .chip").forEach((c) => c.addEventListener("click", () => {
   if (i >= 0) state.prefs.vibes.splice(i, 1);
   else state.prefs.vibes.push(v);
   renderVibesPriority();
+  scheduleLiveEstimate();
 }));
 
 // Nivel de viaje (destino + alojamiento)
@@ -161,12 +171,14 @@ $$("#stayTiers .stay-tier").forEach((b) => b.addEventListener("click", () => {
   $$("#stayTiers .stay-tier").forEach((x) => x.classList.remove("is-selected"));
   b.classList.add("is-selected");
   state.prefs.stayTier = b.dataset.stay;
+  scheduleLiveEstimate();
 }));
 
 // Clima / ritmo
 $$("#climateChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#climateChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected"); state.prefs.climate = c.dataset.climate;
+  scheduleLiveEstimate();
 }));
 // Ritmo del viaje + explicación de qué implica cada opción.
 const PACE_EXPLAIN = {
@@ -182,11 +194,65 @@ $$("#paceChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#paceChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected"); state.prefs.pace = c.dataset.pace;
   updatePaceExplain();
+  scheduleLiveEstimate();
 }));
 updatePaceExplain();
 
 // Joyas escondidas
-$("#hiddenGems").addEventListener("change", (e) => state.prefs.hiddenGems = e.target.checked);
+$("#hiddenGems").addEventListener("change", (e) => {
+  state.prefs.hiddenGems = e.target.checked;
+  scheduleLiveEstimate();
+});
+
+/* ===================== Estimación viva ===================== */
+function renderEstimate(data) {
+  const box = $("#liveEstimate");
+  const headline = $("#estimateHeadline");
+  const note = $("#estimateNote");
+  const range = $("#estimateRange");
+  if (!box || !headline || !note || !range) return;
+
+  box.classList.remove("is-loading");
+  const r = data?.range;
+  const copy = data?.copy || {};
+  if (!r) {
+    headline.textContent = "Estimación no disponible todavía";
+    note.textContent = "Seguiremos afinando cuando completes más preferencias.";
+    range.textContent = "—";
+    return;
+  }
+  range.textContent = `${euro(r.low)} - ${euro(r.high)}`;
+  headline.textContent = copy.headline || `Entre ${euro(r.low)} y ${euro(r.high)} por persona`;
+  const drivers = Array.isArray(copy.drivers) && copy.drivers.length
+    ? ` ${copy.drivers.join(" · ")}`
+    : "";
+  note.textContent = `${copy.note || "Rango orientativo de vuelo + hotel antes de elegir fecha."}${drivers}`;
+}
+
+function scheduleLiveEstimate(delay = 450) {
+  clearTimeout(estimateTimer);
+  estimateTimer = setTimeout(refreshLiveEstimate, delay);
+}
+
+async function refreshLiveEstimate() {
+  const box = $("#liveEstimate");
+  if (!box) return;
+  box.classList.add("is-loading");
+  const seq = ++estimateReqSeq;
+  try {
+    const res = await fetch("/api/estimate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prefs: state.prefs, step: state.step }),
+    });
+    const data = await res.json();
+    if (seq !== estimateReqSeq) return;
+    if (data.ok) renderEstimate(data);
+    else renderEstimate(null);
+  } catch (err) {
+    if (seq === estimateReqSeq) renderEstimate(null);
+  }
+}
 
 /* ===================== Cotización ===================== */
 async function submitQuiz() {
@@ -211,9 +277,9 @@ async function submitQuiz() {
     state.selectedTier = "none";
     state.calMonth = startMonth(minDate());
     $("#loading").hidden = true;
-    // Antes de mostrar calendario y destinos, pedimos un presupuesto por persona
-    // (con el mínimo que el servidor ha calculado según precios y configuración).
-    showBudgetGate();
+    renderResults();
+    $("#results").hidden = false;
+    $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (err) {
     $("#loading").hidden = true;
     $("#quiz").hidden = false;
@@ -366,17 +432,12 @@ function renderDestinations() {
     const gem = d.isHiddenGem ? `<span class="dest-badge">◈ Joya escondida</span>` : "";
     const transfer = d.transfer ? `<div class="dest-transfer">🚆 ${d.transfer}</div>` : "";
 
-    // Coste de descartar este destino: gratis si sería el 1º, +10 €/p si sería el 2º.
-    const wouldBeFee = !isDiscarded && state.discarded.size === 1;
-    const feeTag = wouldBeFee ? `<span class="dest-feetag">+${euro(DISCARD_FEE_PP)}/persona</span>` : "";
-    // Deshabilitamos descartar más si ya hay 2 o si solo queda 1 activo.
     const disabled = !isDiscarded && (limitReached || onlyOneLeft);
 
     el.innerHTML = `
       ${img}
       ${gem}
-      <button class="dest-discard${disabled ? " is-disabled" : ""}" title="${isDiscarded ? "Recuperar destino" : disabled ? "Máximo 2 descartes" : "Descartar destino"}" data-id="${d.id}"${disabled ? " disabled" : ""}>${isDiscarded ? "↺" : "✕"}</button>
-      ${feeTag}
+      <button class="dest-discard${disabled ? " is-disabled" : ""}" title="${isDiscarded ? "Recuperar destino" : disabled ? "Ya has descartado un destino" : "Descartar destino"}" data-id="${d.id}"${disabled ? " disabled" : ""}>${isDiscarded ? "↺" : "✕"}</button>
       <div class="dest-body">
         <div class="dest-name">${d.name}</div>
         <div class="dest-country">${d.region ? d.region + " · " : ""}${d.country}</div>
@@ -393,7 +454,7 @@ function renderDestinations() {
     if (state.discarded.has(id)) {
       state.discarded.delete(id);
     } else {
-      if (state.discarded.size >= MAX_DISCARDS) return; // no más de 2
+      if (state.discarded.size >= MAX_DISCARDS) return;
       if (activeDestinations().length <= 1) return;      // no descartar el último
       state.discarded.add(id);
     }
