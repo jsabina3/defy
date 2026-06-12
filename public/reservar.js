@@ -8,6 +8,8 @@ const state = {
     vibes: [],          // ordenadas por prioridad (la 1ª es la que más pesa)
     climate: "any",
     pace: "balanced",
+    profile: null,      // con quién viaja: solo · pareja · amigos · familia
+    age: null,          // edad media del grupo (orientativa)
     stayTier: "boutique", // nivel de viaje: comodo · boutique · villa
     hiddenGems: true,
   },
@@ -83,6 +85,19 @@ $$("#nightsChoice .choice").forEach((c) => c.addEventListener("click", () => {
 // Ciudad
 $("#departureCity").addEventListener("change", (e) => state.prefs.departureCity = e.target.value);
 
+// Perfil del viajero (con quién viaja)
+$$("#profileChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#profileChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected");
+  state.prefs.profile = c.dataset.profile;
+}));
+
+// Edad media del grupo
+$("#age").addEventListener("input", (e) => {
+  const v = parseInt(e.target.value, 10);
+  state.prefs.age = Number.isFinite(v) && v > 0 ? Math.max(1, Math.min(99, v)) : null;
+});
+
 // Vibes por ORDEN de prioridad: el orden de click es la prioridad.
 const VIBE_LABELS = {
   beach: "Costa & playa", culture: "Ciudad & cultura", nature: "Naturaleza & lagos",
@@ -132,10 +147,22 @@ $$("#climateChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#climateChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected"); state.prefs.climate = c.dataset.climate;
 }));
+// Ritmo del viaje + explicación de qué implica cada opción.
+const PACE_EXPLAIN = {
+  relax: "<b>Relax total:</b> días sin agenda. Priorizamos destinos para desconectar (playa, naturaleza, spa) y dejamos las experiencias al mínimo para que mandes tú.",
+  balanced: "<b>Equilibrado:</b> lo mejor del destino sin agobios. Mezclamos un par de planes al día (cultura, gastronomía) con tiempo libre para perderte a tu aire.",
+  adventure: "<b>Aventura:</b> exprimir el destino. Más actividades, rutas y vida (cultura, deporte al aire libre, noche) para no parar de un sitio a otro.",
+};
+function updatePaceExplain() {
+  const el = $("#paceExplain");
+  if (el) el.innerHTML = PACE_EXPLAIN[state.prefs.pace] || "";
+}
 $$("#paceChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#paceChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected"); state.prefs.pace = c.dataset.pace;
+  updatePaceExplain();
 }));
+updatePaceExplain();
 
 // Joyas escondidas
 $("#hiddenGems").addEventListener("change", (e) => state.prefs.hiddenGems = e.target.checked);
@@ -571,10 +598,10 @@ async function refreshPrice() {
         date: state.selectedDate,
         tierId: state.selectedTier === "none" ? "none" : state.selectedTier,
         discards: state.discarded.size,
+        // Enviamos la ficha COMPLETA del destino (la IA puede haberlo inventado,
+        // así el servidor lo cotiza aunque no esté en su catálogo).
         destinations: state.quote.destinations.map((d) => ({
-          id: d.id, flightPerPerson: d.flightPerPerson,
-          hotelPerNight: d.hotelPerNight, matchReason: d.matchReason,
-          discarded: state.discarded.has(d.id),
+          ...d, discarded: state.discarded.has(d.id),
         })),
       }),
     });
@@ -619,10 +646,9 @@ async function checkout() {
         date: state.selectedDate,
         tierId: state.selectedTier === "none" ? "none" : state.selectedTier,
         discards: state.discarded.size,
+        // Ficha completa del destino (ver nota en refreshPrice).
         destinations: state.quote.destinations.map((d) => ({
-          id: d.id, flightPerPerson: d.flightPerPerson,
-          hotelPerNight: d.hotelPerNight, matchReason: d.matchReason,
-          discarded: state.discarded.has(d.id),
+          ...d, discarded: state.discarded.has(d.id),
         })),
       }),
     });
@@ -746,6 +772,8 @@ function renderOverlay(data) {
         </div>
       </details>
 
+      <div class="miles-teaser" id="milesTeaser"></div>
+
       <div class="reveal-actions">
         <button class="btn btn-primary btn-lg" id="overlayConfirm">Confirmar pre-reserva</button>
         <button class="btn btn-ghost" id="overlayBack">Volver</button>
@@ -754,11 +782,70 @@ function renderOverlay(data) {
 
   $("#overlay").hidden = false;
   document.body.style.overflow = "hidden";
+  renderMilesTeaser(f.chargedTotal);
   $("#overlayBack").addEventListener("click", closeOverlay);
-  $("#overlayConfirm").addEventListener("click", () => {
-    $("#overlayConfirm").textContent = "✓ Pre-reserva registrada";
-    $("#overlayConfirm").disabled = true;
-  });
+  $("#overlayConfirm").addEventListener("click", () => confirmBooking(b, f));
+}
+
+/* Millas que sumaría esta reserva (con el multiplicador del nivel del usuario). */
+function milesForBooking(amount) {
+  const u = window.DefyAuth?.user;
+  const mult = u?.level?.multiplier || 1;
+  return Math.round((Number(amount) || 0) * mult);
+}
+
+function renderMilesTeaser(amount) {
+  const el = $("#milesTeaser");
+  if (!el || !window.DefyAuth) return;
+  const u = DefyAuth.user;
+  const miles = milesForBooking(amount);
+  if (u) {
+    el.innerHTML = `<span class="miles-teaser-ic">✦</span> Esta escapada te sumará <b>${DefyAuth.fmtMiles(miles)} millas</b> en tu Pasaporte Defy (nivel ${u.level.icon} ${u.level.name}).`;
+  } else {
+    el.innerHTML = `<span class="miles-teaser-ic">✦</span> Crea tu <b>Pasaporte Defy</b> gratis y gana <b>${DefyAuth.fmtMiles(amount)} millas</b> con esta reserva + 500 de bienvenida. <button class="miles-teaser-link" id="milesJoin">Unirme</button>`;
+    const join = $("#milesJoin");
+    if (join) join.addEventListener("click", () => DefyAuth.openModal("register").then(() => renderMilesTeaser(amount)));
+  }
+}
+
+async function confirmBooking(b, f) {
+  const btn = $("#overlayConfirm");
+  btn.disabled = true;
+  const original = btn.textContent;
+  try {
+    // Aseguramos sesión para que la reserva sume millas al Pasaporte Defy.
+    if (!DefyAuth.user) {
+      btn.textContent = "Necesitamos tu cuenta…";
+      await DefyAuth.requireAuth("register");
+      btn.disabled = true;
+    }
+    btn.textContent = "Registrando…";
+    const res = await fetch("/api/rewards/earn", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount: f.chargedTotal,
+        destination: b.destination.name,
+        date: b.date,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "No se pudo registrar.");
+    await DefyAuth.refresh();
+    btn.textContent = `✓ Pre-reserva registrada · +${DefyAuth.fmtMiles(data.earned)} millas`;
+    const teaser = $("#milesTeaser");
+    if (teaser) {
+      teaser.classList.add("earned");
+      teaser.innerHTML = data.leveledUp
+        ? `🎉 <b>¡Has subido a nivel ${data.user.level.icon} ${data.user.level.name}!</b> +${DefyAuth.fmtMiles(data.earned)} millas. <a href="/cuenta">Ver mi pasaporte →</a>`
+        : `✦ <b>+${DefyAuth.fmtMiles(data.earned)} millas</b> sumadas. Ya tienes ${DefyAuth.fmtMiles(data.user.miles)}. <a href="/cuenta">Ver mi pasaporte →</a>`;
+    }
+  } catch (e) {
+    console.error(e);
+    btn.disabled = false;
+    btn.textContent = original;
+    alert(e.message || "No se pudo registrar la pre-reserva.");
+  }
 }
 
 function closeOverlay() { $("#overlay").hidden = true; document.body.style.overflow = ""; }

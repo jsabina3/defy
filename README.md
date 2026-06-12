@@ -7,6 +7,22 @@ Web de reserva de viajes sorpresa (estilo Waynabox, pero con superpoderes):
 - **Joyas escondidas**: destinos que requieren volar + 1–2 h en coche/tren/ferry (Positano, Lago de Como, Hallstatt, Cinque Terre…).
 - **Escapadas cortas** (2–4 días) y mucho peso visual (vídeo en el hero).
 - Al final del proceso (sin pago) se revela el **vuelo y hotel asignados** y el **margen** que sacaríamos.
+- **Pasaporte Defy**: cuentas de usuario con un programa de recompensas (millas + niveles + canje). Ver abajo.
+
+## Pasaporte Defy (cuentas + recompensas)
+
+Sistema de cuentas sin base de datos ni dependencias externas: las cuentas se guardan
+en un único `data/accounts.json` y solo se usan módulos nativos de Node (`crypto` para
+hashing **scrypt** de contraseñas y tokens de sesión). La sesión viaja en una **cookie
+httpOnly** (`defy_session`).
+
+Diseño del programa (alineado con buenas prácticas de loyalty 2026: progreso visible,
+pocos niveles claros, quick win de bienvenida, recompensas sorpresa, canje flexible):
+
+- **Millas**: ganas 1 milla por cada 1 € de viaje pre-reservado (× multiplicador del nivel) y **500 de bienvenida** al registrarte.
+- **Niveles** (según millas ganadas de por vida; canjear nunca te baja de nivel): 🧭 Curioso → 🗺️ Explorador (1.500) → ⛰️ Aventurero (5.000) → 👑 Leyenda (12.000). Cada nivel sube el multiplicador de millas y los descartes gratis.
+- **Canje** (`/cuenta`): descarte extra gratis, 30 € de descuento, upgrade de alojamiento y experiencia sorpresa. Cada canje genera un voucher con código.
+- El widget de cuenta aparece en la barra de todas las páginas; al confirmar una pre-reserva se suman las millas (pide registro si no hay sesión).
 
 ## Stack
 
@@ -40,6 +56,7 @@ Abre http://localhost:3000
 | `AMADEUS_CLIENT_SECRET` | No          | Secreto de Amadeus.                                                |
 | `AMADEUS_ENV`           | No          | `test` (gratis) o `production`. Por defecto `test`.                |
 | `UNSPLASH_ACCESS_KEY`   | No          | Unsplash. Activa fotos de alta calidad (fallback: LoremFlickr).    |
+| `ACCOUNTS_DIR`          | No          | Carpeta donde guardar `accounts.json` (Pasaporte Defy). Por defecto `./data`. En Railway, apúntala a un volumen para que las cuentas persistan entre deploys (no uses la carpeta del volumen de imágenes: se sirve por HTTP). |
 | `PORT`                  | No          | Puerto (Railway lo inyecta automáticamente).                       |
 
 ## Desplegar en Railway
@@ -54,9 +71,13 @@ Abre http://localhost:3000
 - `POST /api/quote` — recibe preferencias, devuelve destinos + parámetros de precio.
 - `POST /api/checkout` — revela vuelo, hotel, destino asignado y el margen.
 - `GET /api/health` — estado y proveedores activos (IA, Amadeus, Unsplash).
+- `POST /api/auth/register` · `POST /api/auth/login` · `POST /api/auth/logout` — cuentas (cookie de sesión).
+- `GET /api/auth/me` — usuario actual + catálogo de niveles y recompensas.
+- `POST /api/rewards/earn` — suma millas por una pre-reserva (requiere sesión).
+- `POST /api/rewards/redeem` — canjea una recompensa por millas (requiere sesión).
 
 ## Notas
 
 - Sin Amadeus, los precios son **estimaciones** (IA + motor de markups). Con Amadeus, el precio base de vuelo/hotel es **real** y la estacionalidad lo modula por fecha. En ningún caso son reservas reales.
-- Sin base de datos: no se guardan clientes ni clics (pendiente, según lo acordado).
-- **Seguridad:** la `OPENAI_API_KEY` solo se usa en el servidor; nunca llega al navegador.
+- Persistencia ligera por fichero (`data/accounts.json`) solo para las cuentas del Pasaporte Defy; el resto del flujo de cotización sigue sin estado. No hay reservas reales ni cobros.
+- **Seguridad:** la `OPENAI_API_KEY` solo se usa en el servidor; nunca llega al navegador. Las contraseñas se guardan con hash **scrypt** + salt y la sesión va en cookie httpOnly; `data/` está en `.gitignore`.

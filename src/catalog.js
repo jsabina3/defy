@@ -24,7 +24,10 @@ export const PRICING = {
   markups: { flight: 1.06, hotel: 1.2, transfer: 1.28, activity: 1.42 },
   weekendPremium: 0.12, // salidas viernes/sábado
   peoplePerRoom: 2,
-  anchorPercentile: 0.45, // ligeramente por debajo de la mediana => precio competitivo, con margen al asignar el destino más barato
+  // Hotel/noche de referencia (mediana aprox. del catálogo) para mostrar el
+  // PROXY de precio de cada nivel de alojamiento ANTES de pedir cotización.
+  refHotelNight: 155,
+  anchorPercentile: 0.40, // por debajo de la mediana => precio lo más competitivo posible, dejando margen al asignar el destino más barato
   bandLow: 0.72,         // ningún destino por debajo del 72 % de la mediana del pool
   bandHigh: 1.42,        // ni por encima del 142 %
   destinationsShown: 10, // tope de destinos a mostrar cuando hay encaje de sobra
@@ -47,6 +50,7 @@ export const STAY_TIERS = [
     tagline: "Alojamiento sencillo, céntrico y con buen rollo",
     stars: 3,
     hotelFactor: 0.74,
+    priceLevel: "€",
     stayType: "Aparthotel, casa de huéspedes u hostal boutique (3★)",
     examples: "Un hostal con encanto en Marsella, un aparthotel céntrico en Oporto",
   },
@@ -56,6 +60,7 @@ export const STAY_TIERS = [
     tagline: "Hotel con carácter 4★ en la mejor zona",
     stars: 4,
     hotelFactor: 1.0,
+    priceLevel: "€€",
     stayType: "Hotel boutique 4★, céntrico y con encanto",
     examples: "Un boutique con terraza en Florencia, un 4★ frente al casco antiguo",
     recommended: true,
@@ -66,10 +71,18 @@ export const STAY_TIERS = [
     tagline: "Villa privada, suite o 5★ con vistas y extras",
     stars: 5,
     hotelFactor: 1.7,
+    priceLevel: "€€€",
     stayType: "Villa privada, suite o 5★ con vistas",
     examples: "Una villa sobre el Lago de Como, una suite con caldera en Santorini",
   },
 ];
+// Proxy de precio por noche y habitación de cada nivel (orientativo, calculado a
+// partir del hotel/noche de referencia y el factor del nivel). Sirve para que el
+// viajero vea "desde ≈X €/noche" en cada opción antes de elegir destino y fecha.
+for (const t of STAY_TIERS) {
+  t.proxyPerNight = Math.round(PRICING.refHotelNight * t.hotelFactor * PRICING.markups.hotel);
+}
+
 export const STAY_TIERS_BY_ID = Object.fromEntries(STAY_TIERS.map((t) => [t.id, t]));
 export const stayTierFactor = (id) => (STAY_TIERS_BY_ID[id] || STAY_TIERS_BY_ID.boutique).hotelFactor;
 
@@ -115,6 +128,12 @@ export const TIERS = [
 const L = (kw, lock) => ({ kind: "flickr", query: kw, lock });
 const LOCAL = (path) => ({ kind: "local", path });
 
+// Cada destino lleva dos ejes para evitar la "bajona" (un destino que decepciona):
+//   - appeal  (1..5): atractivo intrínseco / factor "wow" del destino.
+//   - novelty (1..5): lo poco trillado/sorprendente que resulta para un viajero
+//     español. 1 = muy conocido y a tiro de piedra (p. ej. Oporto desde Madrid);
+//     5 = casi ignoto y exótico (Capadocia, Lofoten). Junto con la distancia
+//     (baseFlight como proxy) componen la puntuación anti-bajona del servidor.
 export const CATALOG = [
   {
     id: "positano",
@@ -129,6 +148,7 @@ export const CATALOG = [
     season: "beach",
     image: L("positano,amalfi-coast,italy", 32),
     baseFlight: 150, baseHotelNight: 230, transferCost: 55,
+    appeal: 5, novelty: 4,
     blurb: "Casas pastel cayendo al mar y limoncello al atardecer.",
   },
   {
@@ -144,6 +164,7 @@ export const CATALOG = [
     season: "nature",
     image: LOCAL("/assets/como.jpg"),
     baseFlight: 120, baseHotelNight: 210, transferCost: 35,
+    appeal: 5, novelty: 4,
     blurb: "Villas señoriales, agua color esmeralda y pueblos de postal.",
   },
   {
@@ -159,6 +180,7 @@ export const CATALOG = [
     season: "beach",
     image: LOCAL("/assets/santorini.webp"),
     baseFlight: 200, baseHotelNight: 235, transferCost: 0,
+    appeal: 5, novelty: 3,
     blurb: "El atardecer más famoso del Egeo sobre cúpulas blancas.",
   },
   {
@@ -176,6 +198,7 @@ export const CATALOG = [
     // usamos una foto de alta resolución por palabra clave.
     image: L("paris,eiffel-tower,france", 28),
     baseFlight: 110, baseHotelNight: 195, transferCost: 0,
+    appeal: 5, novelty: 2,
     blurb: "El clásico que nunca falla: arte, brasseries y luz dorada.",
   },
   {
@@ -191,6 +214,7 @@ export const CATALOG = [
     season: "city",
     image: L("rome,colosseum,italy", 11),
     baseFlight: 120, baseHotelNight: 155, transferCost: 0,
+    appeal: 5, novelty: 2,
     blurb: "Tres milenios de historia entre trattorias y fontanas.",
   },
   {
@@ -206,6 +230,7 @@ export const CATALOG = [
     season: "beach",
     image: L("cinque-terre,manarola,italy", 7),
     baseFlight: 140, baseHotelNight: 175, transferCost: 30,
+    appeal: 4, novelty: 4,
     blurb: "Cinco pueblos colgados del acantilado sobre el Mediterráneo.",
   },
   {
@@ -221,6 +246,7 @@ export const CATALOG = [
     season: "alpine",
     image: L("lake-bled,slovenia", 9),
     baseFlight: 160, baseHotelNight: 130, transferCost: 30,
+    appeal: 4, novelty: 4,
     blurb: "Una isla con campanario en un lago alpino de cuento.",
   },
   {
@@ -236,6 +262,7 @@ export const CATALOG = [
     season: "alpine",
     image: L("hallstatt,austria,village", 5),
     baseFlight: 170, baseHotelNight: 145, transferCost: 35,
+    appeal: 4, novelty: 4,
     blurb: "El pueblo lacustre más fotografiado de los Alpes.",
   },
   {
@@ -251,6 +278,7 @@ export const CATALOG = [
     season: "city",
     image: L("sintra,pena-palace,portugal", 6),
     baseFlight: 90, baseHotelNight: 135, transferCost: 20,
+    appeal: 4, novelty: 3,
     blurb: "Palacios de colores entre bosques de niebla atlántica.",
   },
   {
@@ -266,6 +294,7 @@ export const CATALOG = [
     season: "city",
     image: L("lisbon,tram,portugal", 14),
     baseFlight: 90, baseHotelNight: 140, transferCost: 0,
+    appeal: 3, novelty: 2,
     blurb: "Tranvías amarillos, fado y miradores sobre el Tajo.",
   },
   {
@@ -281,6 +310,7 @@ export const CATALOG = [
     season: "city",
     image: L("porto,douro,portugal", 8),
     baseFlight: 95, baseHotelNight: 130, transferCost: 0,
+    appeal: 3, novelty: 1,
     blurb: "Bodegas de vino en el Duero y azulejos por todas partes.",
   },
   {
@@ -296,6 +326,7 @@ export const CATALOG = [
     season: "city",
     image: L("florence,tuscany,italy", 13),
     baseFlight: 130, baseHotelNight: 170, transferCost: 0,
+    appeal: 5, novelty: 3,
     blurb: "La cuna del Renacimiento entre colinas de viñedos.",
   },
   {
@@ -311,6 +342,7 @@ export const CATALOG = [
     season: "alpine",
     image: L("annecy,france,lake", 4),
     baseFlight: 150, baseHotelNight: 160, transferCost: 30,
+    appeal: 4, novelty: 4,
     blurb: "La 'Venecia de los Alpes': canales y agua turquesa.",
   },
   {
@@ -326,6 +358,7 @@ export const CATALOG = [
     season: "city",
     image: L("ronda,spain,bridge", 3),
     baseFlight: 70, baseHotelNight: 120, transferCost: 30,
+    appeal: 3, novelty: 3,
     blurb: "Un pueblo blanco partido en dos por un tajo de vértigo.",
   },
   {
@@ -341,6 +374,7 @@ export const CATALOG = [
     season: "city",
     image: L("marrakech,medina,morocco", 12),
     baseFlight: 130, baseHotelNight: 115, transferCost: 0,
+    appeal: 4, novelty: 3,
     blurb: "Zocos, riads con patio y noches en la plaza Jemaa el-Fna.",
   },
   {
@@ -356,6 +390,7 @@ export const CATALOG = [
     season: "city",
     image: L("budapest,parliament,hungary", 10),
     baseFlight: 140, baseHotelNight: 110, transferCost: 0,
+    appeal: 4, novelty: 3,
     blurb: "Balnearios termales, ruin bars y un Danubio iluminado.",
   },
   {
@@ -371,6 +406,7 @@ export const CATALOG = [
     season: "beach",
     image: L("dubrovnik,croatia,old-town", 15),
     baseFlight: 180, baseHotelNight: 175, transferCost: 0,
+    appeal: 4, novelty: 3,
     blurb: "Murallas medievales sobre un Adriático imposiblemente azul.",
   },
   {
@@ -386,6 +422,7 @@ export const CATALOG = [
     season: "nature",
     image: L("madeira,portugal,coast", 21),
     baseFlight: 185, baseHotelNight: 150, transferCost: 0,
+    appeal: 4, novelty: 3,
     blurb: "Acantilados atlánticos, piscinas naturales y rutas entre levadas.",
   },
   {
@@ -401,6 +438,7 @@ export const CATALOG = [
     season: "nature",
     image: L("azores,sao-miguel,lake", 22),
     baseFlight: 210, baseHotelNight: 135, transferCost: 0,
+    appeal: 5, novelty: 4,
     blurb: "Lagunas volcánicas, termas naturales y carreteras verdes infinitas.",
   },
   {
@@ -416,6 +454,7 @@ export const CATALOG = [
     season: "alpine",
     image: L("dolomites,italy,mountains", 23),
     baseFlight: 145, baseHotelNight: 165, transferCost: 45,
+    appeal: 5, novelty: 4,
     blurb: "Picos afilados, lagos turquesa y refugios con cocina alpina.",
   },
   {
@@ -431,6 +470,7 @@ export const CATALOG = [
     season: "city",
     image: L("copenhagen,nyhavn,denmark", 24),
     baseFlight: 155, baseHotelNight: 185, transferCost: 0,
+    appeal: 4, novelty: 3,
     blurb: "Diseño nórdico, canales, panaderías y barrios junto al agua.",
   },
   {
@@ -446,6 +486,7 @@ export const CATALOG = [
     season: "city",
     image: L("cappadocia,turkey,balloons", 25),
     baseFlight: 245, baseHotelNight: 120, transferCost: 38,
+    appeal: 5, novelty: 5,
     blurb: "Hoteles cueva, globos al amanecer y paisajes lunares.",
   },
   {
@@ -461,6 +502,7 @@ export const CATALOG = [
     season: "city",
     image: L("provence,luberon,france,village", 26),
     baseFlight: 125, baseHotelNight: 155, transferCost: 32,
+    appeal: 4, novelty: 4,
     blurb: "Mercados, viñedos, piedra dorada y carreteras entre lavanda.",
   },
   {
@@ -476,6 +518,7 @@ export const CATALOG = [
     season: "alpine",
     image: L("lofoten,norway,reine", 27),
     baseFlight: 290, baseHotelNight: 175, transferCost: 65,
+    appeal: 5, novelty: 5,
     blurb: "Casas rojas de pescadores, fiordos y luz ártica.",
   },
   {
@@ -491,6 +534,7 @@ export const CATALOG = [
     season: "city",
     image: L("seville,plaza-espana,spain", 2),
     baseFlight: 70, baseHotelNight: 125, transferCost: 0,
+    appeal: 4, novelty: 2,
     blurb: "Flamenco, naranjos y tapas hasta la madrugada.",
   },
 ];
@@ -553,3 +597,12 @@ const stripAccents = (s) =>
     // letras nórdicas que NFD no descompone
     .replace(/ø/g, "o").replace(/å/g, "a").replace(/æ/g, "ae");
 export const iataFor = (city) => CITY_IATA[stripAccents(city)] || null;
+
+// Registra en runtime el IATA de una ciudad/gateway que la IA proponga, para que
+// los precios reales de Amadeus también funcionen con destinos fuera del catálogo.
+export function registerIata(city, code) {
+  if (!city || !code) return;
+  const c = String(code).trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(c)) return;
+  CITY_IATA[stripAccents(city)] = c;
+}

@@ -17,7 +17,10 @@
   <header class="app-topbar">
     <a href="/" class="brand"><span class="brand-mark">◆</span> Defy</a>
     <div class="app-steps-hint">Configurador de viaje sorpresa</div>
-    <a href="/" class="btn btn-pill btn-ghost">← Volver al inicio</a>
+    <div class="topbar-right">
+      <div data-acct-slot></div>
+      <a href="/" class="btn btn-pill btn-ghost">← Volver al inicio</a>
+    </div>
   </header>
 
   <!-- HEADER -->
@@ -57,6 +60,21 @@
             </div>
           </label>
         </div>
+
+        <span class="field-label">¿Con quién viajas?</span>
+        <p class="quiz-hint">Adaptamos destinos y experiencias a tu tipo de grupo.</p>
+        <div class="choice-row" id="profileChoice">
+          <button type="button" class="choice" data-profile="solo">🧍 Solo/a</button>
+          <button type="button" class="choice" data-profile="pareja">💞 En pareja</button>
+          <button type="button" class="choice" data-profile="amigos">🎉 Amigos</button>
+          <button type="button" class="choice" data-profile="familia">👨‍👩‍👧 Familia</button>
+        </div>
+
+        <label class="field">
+          <span>Edad media del grupo</span>
+          <input id="age" type="number" min="1" max="99" placeholder="p. ej. 32" inputmode="numeric" />
+        </label>
+
         <span class="field-label">Duración (escapada corta)</span>
         <div class="choice-row" id="nightsChoice">
           <button type="button" class="choice" data-nights="1">2 días<small>1 noche</small></button>
@@ -93,6 +111,7 @@
           <button type="button" class="stay-tier" data-stay="comodo">
             <span class="stay-stars">★★★</span>
             <span class="stay-name">Cómodo</span>
+            <span class="stay-price"><b>€</b> desde ≈138 €/noche·hab.</span>
             <span class="stay-desc">Aparthotel, casa de huéspedes u hostal boutique, céntrico y con buen rollo.</span>
             <span class="stay-eg">Ej.: hostal con encanto en Marsella · aparthotel en Oporto</span>
           </button>
@@ -100,16 +119,19 @@
             <span class="stay-badge">Recomendado</span>
             <span class="stay-stars">★★★★</span>
             <span class="stay-name">Boutique</span>
+            <span class="stay-price"><b>€€</b> desde ≈186 €/noche·hab.</span>
             <span class="stay-desc">Hotel con carácter 4★ en la mejor zona, perfecto equilibrio calidad-precio.</span>
             <span class="stay-eg">Ej.: boutique con terraza en Florencia · 4★ frente al casco antiguo</span>
           </button>
           <button type="button" class="stay-tier" data-stay="villa">
             <span class="stay-stars">★★★★★</span>
             <span class="stay-name">Villa &amp; Lujo</span>
+            <span class="stay-price"><b>€€€</b> desde ≈316 €/noche·hab.</span>
             <span class="stay-desc">Villa privada, suite o 5★ con vistas y extras. La experiencia más alta.</span>
             <span class="stay-eg">Ej.: villa sobre el Lago de Como · suite con caldera en Santorini</span>
           </button>
         </div>
+        <p class="quiz-hint">Precio orientativo por noche y habitación (vuelo aparte). El total final se calcula con tus fechas y destino.</p>
       </div>
 
       <!-- Paso 4 -->
@@ -124,11 +146,13 @@
           <button type="button" class="choice is-selected" data-climate="any">🎲 Indiferente</button>
         </div>
         <span class="field-label">Ritmo del viaje</span>
+        <p class="quiz-hint">El <b>ritmo</b> es cuánto quieres llenar cada día: desde no hacer planes y desconectar, hasta exprimir el destino con muchas actividades.</p>
         <div class="choice-row" id="paceChoice">
           <button type="button" class="choice" data-pace="relax">🧘 Relax total</button>
           <button type="button" class="choice is-selected" data-pace="balanced">⚖️ Equilibrado</button>
           <button type="button" class="choice" data-pace="adventure">🧭 Aventura</button>
         </div>
+        <p class="pace-explain" id="paceExplain"></p>
 
         <label class="toggle" id="gemsToggle">
           <input type="checkbox" id="hiddenGems" checked />
@@ -224,6 +248,7 @@
     </div>
   </div>
 
+  <script src="/auth.js"></script>
   <script src="/reservar.js"></script>
 </body>
 </html>

@@ -366,6 +366,14 @@ em {
 .vibes-order { margin-top: 1rem; font-size: 0.9rem; color: var(--ink-soft); }
 .vibes-order b { color: var(--ink); font-weight: 700; }
 
+/* Explicación del ritmo de viaje (se rellena según la opción elegida) */
+.pace-explain {
+  margin-top: 0.8rem; font-size: 0.88rem; color: var(--ink-soft);
+  border-left: 3px solid var(--coral); padding: 0.55rem 0.9rem;
+  background: var(--field-bg); border-radius: var(--radius-sm);
+}
+.pace-explain b { color: var(--ink); font-weight: 700; }
+
 /* Nivel de viaje (destino + alojamiento) */
 .stay-tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem; }
 .stay-tier {
@@ -378,6 +386,8 @@ em {
 .stay-tier.is-selected { border-color: var(--coral); box-shadow: 0 0 0 2px var(--coral) inset; }
 .stay-stars { color: var(--gold); font-size: 0.95rem; letter-spacing: 0.05em; }
 .stay-name { font-family: var(--serif); font-size: 1.25rem; font-weight: 600; }
+.stay-price { font-size: 0.82rem; color: var(--ink-soft); }
+.stay-price b { color: var(--coral); font-weight: 800; letter-spacing: 0.02em; margin-right: 0.25rem; }
 .stay-desc { font-size: 0.86rem; color: var(--ink-soft); }
 .stay-eg { font-size: 0.76rem; color: var(--ink-soft); font-style: italic; opacity: 0.85; margin-top: 0.2rem; }
 .stay-badge {
@@ -688,4 +698,231 @@ em {
   .reveal-dest { font-size: 1.9rem; }
   .summary-bar { flex-direction: column; align-items: stretch; gap: 0.6rem; }
   .summary-bar .btn { width: 100%; }
+}
+
+/* ============================================================== */
+/* Cuentas · Pasaporte Defy (programa de recompensas)             */
+/* ============================================================== */
+
+/* ---- Widget de cuenta en la barra ---- */
+.nav-right, .topbar-right { display: flex; align-items: center; gap: 0.7rem; }
+.acct-btn {
+  font-family: var(--sans); font-weight: 600; font-size: 0.9rem; cursor: pointer;
+  padding: 0.55rem 1.05rem; border-radius: 100px;
+  border: 1px solid rgba(255,255,255,0.4); background: rgba(255,255,255,0.1); color: #fff;
+  transition: background 0.2s, transform 0.15s, border-color 0.2s;
+}
+.acct-btn:hover { background: rgba(255,255,255,0.2); transform: translateY(-1px); }
+.nav.scrolled .acct-btn { border-color: var(--line); color: var(--ink); background: var(--field-bg); }
+.app-topbar .acct-btn { border-color: var(--line); color: var(--ink); background: var(--field-bg); }
+.acct-pill {
+  display: inline-flex; align-items: center; gap: 0.55rem;
+  padding: 0.4rem 0.85rem 0.4rem 0.55rem; border-radius: 100px;
+  border: 1px solid var(--line); background: var(--field-bg); color: var(--ink);
+  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+.acct-pill:hover { border-color: var(--coral); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.acct-pill-ic {
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--grad-warm); font-size: 1rem;
+}
+.acct-pill-info { display: flex; flex-direction: column; line-height: 1.1; }
+.acct-pill-info b { font-size: 0.86rem; font-weight: 700; }
+.acct-pill-info small { font-size: 0.72rem; color: var(--gold); font-weight: 600; }
+.nav:not(.scrolled) .acct-pill { border-color: rgba(255,255,255,0.4); background: rgba(255,255,255,0.12); color: #fff; }
+.nav:not(.scrolled) .acct-pill-info small { color: #ffd9b0; }
+@media (max-width: 600px) { .acct-pill-info b { display: none; } }
+
+/* ---- Modal de auth ---- */
+.auth-modal {
+  position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem 1rem; background: rgba(10,7,5,0.72); backdrop-filter: blur(8px); animation: fade 0.25s;
+  overflow-y: auto;
+}
+.auth-card {
+  position: relative; width: 100%; max-width: 440px; margin: auto;
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(255,106,61,0.16), transparent 60%),
+    radial-gradient(120% 90% at 100% 100%, rgba(43,208,189,0.13), transparent 60%),
+    var(--paper-strong);
+  border: 1px solid var(--line); border-radius: calc(var(--radius) + 4px);
+  box-shadow: var(--shadow); padding: clamp(1.6rem, 4vw, 2.2rem); animation: fadeUp 0.35s ease;
+}
+.auth-close {
+  position: absolute; top: 0.9rem; right: 0.9rem; width: 36px; height: 36px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--field-bg); color: var(--ink); cursor: pointer; font-size: 0.9rem;
+}
+.auth-close:hover { border-color: var(--coral); }
+.auth-brand { font-family: var(--serif); font-size: 1.35rem; font-weight: 600; display: flex; align-items: center; gap: 0.45rem; }
+.auth-tagline { color: var(--ink-soft); font-size: 0.92rem; margin: 0.5rem 0 1.3rem; }
+.auth-tagline b { color: var(--gold); }
+.auth-tabs { display: flex; gap: 0.4rem; background: var(--field-bg); border: 1px solid var(--line); border-radius: 100px; padding: 0.25rem; margin-bottom: 1.3rem; }
+.auth-tab {
+  flex: 1; padding: 0.6rem; border: none; background: none; border-radius: 100px;
+  font-family: var(--sans); font-weight: 600; font-size: 0.9rem; color: var(--ink-soft); cursor: pointer; transition: all 0.2s;
+}
+.auth-tab.is-active { background: var(--grad-warm); color: #fff; }
+.auth-form { display: grid; gap: 0.9rem; }
+.auth-field { display: flex; flex-direction: column; gap: 0.4rem; }
+.auth-field span { font-weight: 600; font-size: 0.85rem; }
+.auth-field input {
+  font-family: var(--sans); font-size: 1rem; padding: 0.8rem 1rem;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--field-bg); color: var(--ink);
+}
+.auth-field input:focus { outline: none; border-color: var(--coral); }
+.auth-error { color: #ff8a6a; font-size: 0.85rem; margin: -0.2rem 0 0; }
+.auth-submit { width: 100%; margin-top: 0.4rem; }
+.auth-perks { margin-top: 1.1rem; text-align: center; font-size: 0.78rem; color: var(--ink-soft); }
+
+/* ---- Página de cuenta ---- */
+.account-main { max-width: 1040px; margin: 0 auto; padding: clamp(1.6rem, 4vw, 2.6rem) clamp(1.2rem, 5vw, 3rem) 5rem; }
+
+/* Estado invitado */
+.account-guest { display: grid; place-items: center; min-height: 60vh; }
+.guest-card { max-width: 640px; text-align: center; }
+.guest-icon { font-size: 3rem; }
+.guest-card .lead { margin: 0.8rem auto 1.6rem; max-width: 520px; }
+.guest-card .lead b { color: var(--gold); }
+.guest-perks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1.6rem 0; }
+.guest-perks > div {
+  background: var(--field-bg); border: 1px solid var(--line-soft); border-radius: var(--radius-sm);
+  padding: 1.1rem 0.8rem; display: flex; flex-direction: column; gap: 0.2rem;
+}
+.guest-perks span { font-size: 1.5rem; }
+.guest-perks b { font-family: var(--serif); font-size: 1.05rem; }
+.guest-perks small { color: var(--ink-soft); font-size: 0.78rem; }
+.guest-actions { display: flex; gap: 0.8rem; justify-content: center; flex-wrap: wrap; }
+@media (max-width: 560px) { .guest-perks { grid-template-columns: 1fr; } }
+
+/* Tarjeta-pasaporte */
+.passport {
+  position: relative; overflow: hidden; color: #fff; border-radius: calc(var(--radius) + 6px);
+  padding: clamp(1.6rem, 4vw, 2.4rem); margin-bottom: 2.6rem;
+  background:
+    radial-gradient(130% 120% at 8% 0%, rgba(255,106,61,0.5), transparent 55%),
+    radial-gradient(120% 130% at 100% 100%, rgba(43,208,189,0.42), transparent 55%),
+    linear-gradient(135deg, #20160f, #120d09);
+  border: 1px solid rgba(255,255,255,0.12); box-shadow: var(--shadow);
+}
+.passport-glow { position: absolute; inset: 0; background: radial-gradient(60% 80% at 80% -10%, rgba(236,177,92,0.22), transparent 60%); pointer-events: none; }
+.passport-top { position: relative; display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.passport-label { display: block; font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase; color: rgba(255,245,235,0.7); font-weight: 600; }
+.passport-name { font-family: var(--serif); font-size: clamp(1.5rem, 4vw, 2.1rem); font-weight: 600; line-height: 1.1; }
+.passport-level {
+  display: flex; flex-direction: column; align-items: center; gap: 0.15rem;
+  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+  border-radius: var(--radius-sm); padding: 0.7rem 1rem; backdrop-filter: blur(6px);
+}
+.passport-level-ic { font-size: 1.6rem; }
+.passport-level-name { font-weight: 700; font-size: 0.85rem; }
+.passport-miles { position: relative; display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin: 1.6rem 0 1.2rem; flex-wrap: wrap; }
+.passport-miles-num { font-family: var(--serif); font-size: clamp(2.6rem, 8vw, 3.8rem); font-weight: 700; line-height: 1; background: linear-gradient(120deg, #fff, #ffd9b0); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.passport-miles-unit { display: block; font-size: 0.85rem; color: rgba(255,245,235,0.75); margin-top: 0.2rem; }
+.passport-stamps { text-align: center; background: rgba(255,255,255,0.08); border: 1px dashed rgba(255,255,255,0.3); border-radius: var(--radius-sm); padding: 0.6rem 1.1rem; }
+.stamp-num { display: block; font-family: var(--serif); font-size: 1.8rem; font-weight: 700; color: var(--gold); }
+.stamp-label { font-size: 0.74rem; color: rgba(255,245,235,0.75); }
+.passport-progress { position: relative; }
+.passport-progress-bar { height: 10px; border-radius: 100px; background: rgba(255,255,255,0.15); overflow: hidden; }
+.passport-progress-bar span { display: block; height: 100%; border-radius: 100px; background: linear-gradient(90deg, var(--gold), var(--coral)); transition: width 0.8s ease; }
+.passport-next { display: block; margin-top: 0.6rem; font-size: 0.86rem; color: rgba(255,245,235,0.85); }
+.passport-next b { color: #fff; }
+.passport-perks { position: relative; display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.3rem; }
+.perk-chip { font-size: 0.78rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.16); border-radius: 100px; padding: 0.32rem 0.7rem; color: rgba(255,245,235,0.92); }
+
+/* Bloques */
+.acct-block { margin-bottom: 2.8rem; }
+.acct-block-head { margin-bottom: 1.2rem; }
+.acct-block-head .results-sub { margin-top: 0.3rem; }
+
+/* Niveles */
+.levels-track { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+.level-card {
+  background: var(--paper); border: 1px solid var(--line-soft); border-radius: var(--radius);
+  padding: 1.3rem 1.1rem; position: relative; opacity: 0.62; transition: opacity 0.3s, transform 0.3s, border-color 0.3s;
+}
+.level-card.reached { opacity: 1; }
+.level-card.current { border-color: var(--coral); box-shadow: 0 0 0 2px var(--coral) inset; opacity: 1; transform: translateY(-4px); }
+.level-card-ic { font-size: 1.8rem; }
+.level-card-name { font-family: var(--serif); font-size: 1.25rem; font-weight: 600; margin-top: 0.3rem; }
+.level-card-req { font-size: 0.78rem; color: var(--gold); font-weight: 600; margin-bottom: 0.7rem; }
+.level-card-perks { list-style: none; display: grid; gap: 0.3rem; }
+.level-card-perks li { position: relative; padding-left: 1.1rem; font-size: 0.82rem; color: var(--ink-soft); }
+.level-card-perks li::before { content: "✓"; position: absolute; left: 0; color: var(--teal); font-weight: 700; }
+.level-card-tag {
+  position: absolute; top: -0.7rem; left: 1rem; background: var(--grad-warm); color: #fff;
+  font-size: 0.68rem; font-weight: 800; padding: 0.22rem 0.6rem; border-radius: 100px; box-shadow: var(--shadow-sm);
+}
+.level-card-tag.done { background: var(--teal); color: #042b27; }
+@media (max-width: 860px) { .levels-track { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px) { .levels-track { grid-template-columns: 1fr; } }
+
+/* Canje */
+.rewards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 1rem; }
+.reward-card {
+  background: var(--paper); border: 1px solid var(--line-soft); border-radius: var(--radius);
+  padding: 1.3rem; display: flex; flex-direction: column; gap: 0.5rem; box-shadow: var(--shadow-sm);
+  transition: transform 0.3s, border-color 0.3s;
+}
+.reward-card:hover { transform: translateY(-4px); border-color: var(--coral); }
+.reward-card.locked { opacity: 0.72; }
+.reward-ic {
+  width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; font-size: 1.4rem;
+  background: linear-gradient(135deg, rgba(255,106,61,0.2), rgba(43,208,189,0.18)); border: 1px solid var(--line-soft);
+}
+.reward-name { font-family: var(--serif); font-size: 1.2rem; font-weight: 600; }
+.reward-blurb { color: var(--ink-soft); font-size: 0.86rem; flex: 1; }
+.reward-foot { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; margin-top: 0.4rem; flex-wrap: wrap; }
+.reward-cost { font-weight: 700; color: var(--gold); font-size: 0.9rem; white-space: nowrap; }
+.reward-btn { font-size: 0.82rem; }
+.reward-btn:disabled { background: #3a322a; color: var(--ink-soft); box-shadow: none; }
+
+/* Vouchers */
+.vouchers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; }
+.voucher {
+  display: flex; align-items: center; gap: 0.8rem; padding: 1rem 1.1rem;
+  background: linear-gradient(135deg, rgba(255,106,61,0.12), rgba(43,208,189,0.1)), var(--paper-strong);
+  border: 1px dashed var(--coral); border-radius: var(--radius-sm);
+}
+.voucher-ic { font-size: 1.5rem; }
+.voucher-info { display: flex; flex-direction: column; }
+.voucher-info b { font-size: 0.95rem; }
+.voucher-code { font-family: var(--serif); letter-spacing: 0.08em; color: var(--gold); font-size: 0.82rem; font-weight: 600; }
+
+/* Historial */
+.history-list { list-style: none; border: 1px solid var(--line-soft); border-radius: var(--radius); overflow: hidden; }
+.history-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.9rem 1.2rem; background: var(--paper); border-bottom: 1px solid var(--line-soft); }
+.history-row:last-child { border-bottom: none; }
+.history-main { display: flex; flex-direction: column; }
+.history-label { font-weight: 600; font-size: 0.92rem; }
+.history-date { font-size: 0.76rem; color: var(--ink-soft); }
+.history-miles { font-family: var(--serif); font-weight: 700; font-size: 1.05rem; white-space: nowrap; }
+.history-miles.pos { color: #6fe0a0; }
+.history-miles.neg { color: #ff8a6a; }
+.history-empty { padding: 1.2rem; color: var(--ink-soft); text-align: center; }
+
+.acct-footer { margin-top: 1rem; }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 1.4rem; left: 50%; transform: translateX(-50%); z-index: 100;
+  background: var(--paper-strong); color: var(--ink); border: 1px solid var(--line);
+  padding: 0.9rem 1.4rem; border-radius: 100px; box-shadow: var(--shadow); font-weight: 600; font-size: 0.92rem;
+  animation: slideUp 0.35s ease; max-width: 90vw;
+}
+.toast.is-err { border-color: #ff8a6a; color: #ff8a6a; }
+.toast.is-ok { border-color: var(--teal); }
+
+/* Aviso de millas en la revelación */
+.miles-teaser {
+  margin: 1.2rem 0 0; padding: 0.9rem 1.1rem; border-radius: var(--radius-sm);
+  background: rgba(236,177,92,0.1); border: 1px solid rgba(236,177,92,0.3);
+  color: var(--ink-soft); font-size: 0.9rem;
+}
+.miles-teaser b { color: var(--gold); }
+.miles-teaser.earned { background: rgba(111,224,160,0.12); border-color: rgba(111,224,160,0.4); }
+.miles-teaser a { color: var(--coral); font-weight: 700; }
+.miles-teaser-ic { color: var(--gold); font-weight: 700; }
+.miles-teaser-link {
+  background: none; border: none; color: var(--coral); font-weight: 700; cursor: pointer;
+  font-size: 0.9rem; text-decoration: underline; padding: 0; font-family: var(--sans);
 }

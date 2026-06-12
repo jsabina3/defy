@@ -5,6 +5,9 @@ node_modules/
 .DS_Store
 npm-debug.log*
 
+# Datos de cuentas / Pasaporte Defy (contienen hashes y sesiones; nunca al repo)
+data/
+
 # Assets pesados sin usar (~300 MB): subimos solo los referenciados en la web.
 public/assets/*
 !public/assets/4911651_Woman_Tourist_1080.mp4

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pasaporte Defy · Mi cuenta</title>
+  <meta name="description" content="Tu Pasaporte Defy: millas, nivel, recompensas y escapadas. Sube de nivel con cada viaje sorpresa y canjea descuentos y experiencias." />
+  <meta name="robots" content="noindex" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="booking-page">
+  <!-- TOPBAR -->
+  <header class="app-topbar">
+    <a href="/" class="brand"><span class="brand-mark">◆</span> Defy</a>
+    <div class="app-steps-hint">Pasaporte Defy · programa de recompensas</div>
+    <div class="topbar-right">
+      <div data-acct-slot></div>
+      <a href="/reservar.html" class="btn btn-pill btn-primary">Reservar viaje</a>
+    </div>
+  </header>
+
+  <main class="account-main">
+    <!-- Estado: invitado (sin sesión) -->
+    <section class="account-guest" id="accountGuest" hidden>
+      <div class="guest-card card">
+        <div class="guest-icon">🧭</div>
+        <p class="eyebrow">Pasaporte Defy</p>
+        <h1 class="section-title">Viaja a ciegas. Acumula a lo grande.</h1>
+        <p class="lead">Únete gratis y empieza con <b>500 millas</b>. Gana millas con cada escapada, sube de nivel y canjea descuentos, upgrades y experiencias sorpresa.</p>
+        <div class="guest-perks">
+          <div><span>✦</span><b>500 millas</b><small>solo por registrarte</small></div>
+          <div><span>🗺️</span><b>4 niveles</b><small>con ventajas crecientes</small></div>
+          <div><span>🎁</span><b>Canjea</b><small>descuentos y experiencias</small></div>
+        </div>
+        <div class="guest-actions">
+          <button class="btn btn-primary btn-lg" id="guestJoin">Crear mi cuenta gratis</button>
+          <button class="btn btn-ghost btn-lg" id="guestLogin">Ya tengo cuenta</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Estado: con sesión -->
+    <section class="account-dash" id="accountDash" hidden>
+      <!-- Tarjeta-pasaporte -->
+      <div class="passport" id="passport"></div>
+
+      <!-- Niveles -->
+      <div class="acct-block">
+        <div class="acct-block-head">
+          <h2 class="results-title">Tu camino de niveles</h2>
+          <p class="results-sub">Sube de nivel según las millas que ganas de por vida. Canjear nunca te baja de nivel.</p>
+        </div>
+        <div class="levels-track" id="levelsTrack"></div>
+      </div>
+
+      <!-- Canje -->
+      <div class="acct-block">
+        <div class="acct-block-head">
+          <h2 class="results-title">Canjea tus millas</h2>
+          <p class="results-sub">Recompensas flexibles que puedes usar en tu próxima escapada sorpresa.</p>
+        </div>
+        <div class="rewards-grid" id="rewardsGrid"></div>
+      </div>
+
+      <!-- Vouchers activos -->
+      <div class="acct-block" id="vouchersBlock" hidden>
+        <div class="acct-block-head">
+          <h2 class="results-title">Tus recompensas canjeadas</h2>
+          <p class="results-sub">Enséñalas al reservar para aplicarlas. Cada una tiene un código único.</p>
+        </div>
+        <div class="vouchers-grid" id="vouchersGrid"></div>
+      </div>
+
+      <!-- Historial -->
+      <div class="acct-block">
+        <div class="acct-block-head">
+          <h2 class="results-title">Movimientos de millas</h2>
+        </div>
+        <ul class="history-list" id="historyList"></ul>
+      </div>
+
+      <div class="acct-footer">
+        <button class="btn btn-ghost" id="logoutBtn">Cerrar sesión</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Toast -->
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="/auth.js"></script>
+  <script src="/cuenta.js"></script>
+</body>
+</html>
