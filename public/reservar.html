@@ -221,8 +221,13 @@
           <p class="eyebrow" id="resultSource">Seleccionado para ti</p>
           <h3 class="results-title">Tu escapada sorpresa</h3>
         </div>
-        <button class="btn btn-ghost" id="editPrefs">↺ Cambiar preferencias</button>
+        <div class="topbar-right-btns">
+          <button class="btn btn-ghost" id="editPrefs">↺ Cambiar preferencias</button>
+          <button class="btn btn-primary" id="openAdjust" type="button">⚙ Ajustar propuesta</button>
+        </div>
       </div>
+
+      <div class="config-strip" id="configStrip" hidden></div>
 
       <div class="rstepper" id="rstepper">
         <span class="rstep-pill is-on" data-pill="0"><b>1</b> Fecha</span>
@@ -329,6 +334,133 @@
       <button class="overlay-close" id="overlayClose" aria-label="Cerrar">✕</button>
       <div id="overlayBody"></div>
     </div>
+  </div>
+
+  <!-- AJUSTAR PROPUESTA -->
+  <div class="adjust-drawer" id="adjustDrawer" hidden aria-hidden="true">
+    <div class="adjust-backdrop" id="adjustBackdrop"></div>
+    <aside class="adjust-panel" role="dialog" aria-labelledby="adjustTitle">
+      <header class="adjust-head">
+        <div>
+          <p class="quiz-kicker">Personaliza tu viaje</p>
+          <h3 id="adjustTitle">Ajustar propuesta</h3>
+          <p class="quiz-hint">Modifica presupuesto, duración, calidad del hotel o estilo del viaje. Te generamos una propuesta actualizada.</p>
+        </div>
+        <button type="button" class="adjust-close" id="adjustClose" aria-label="Cerrar">✕</button>
+      </header>
+
+      <div class="adjust-body">
+        <!-- Presupuesto -->
+        <section class="adjust-section">
+          <h4 class="adjust-section-title">💶 Presupuesto</h4>
+          <span class="field-label">Nivel de presupuesto</span>
+          <div class="choice-row choice-row-budget" id="adjBudgetChoice">
+            <button type="button" class="choice" data-budget="budget">Económico</button>
+            <button type="button" class="choice" data-budget="mid">Medio</button>
+            <button type="button" class="choice" data-budget="premium">Premium</button>
+            <button type="button" class="choice" data-budget="luxury">Lujo</button>
+          </div>
+          <label class="field budget-input-field">
+            <span>Presupuesto máximo por persona</span>
+            <div class="budget-input-wrap">
+              <input id="adjBudgetInput" type="number" inputmode="numeric" step="10" min="50" />
+              <span class="budget-unit">€ / persona</span>
+            </div>
+            <small class="adjust-min-note" id="adjBudgetMin"></small>
+          </label>
+        </section>
+
+        <!-- Duración -->
+        <section class="adjust-section">
+          <h4 class="adjust-section-title">📅 Duración</h4>
+          <div class="choice-row" id="adjTripLength">
+            <button type="button" class="choice" data-trip="weekend">Escapada<small>2–3 días</small></button>
+            <button type="button" class="choice" data-trip="short">Corto<small>4–7 días</small></button>
+            <button type="button" class="choice" data-trip="medium">Medio<small>8–14 días</small></button>
+            <button type="button" class="choice" data-trip="long">Largo<small>15–22 días</small></button>
+          </div>
+          <div class="trip-days-field">
+            <span class="field-label">Días exactos</span>
+            <div class="stepper trip-days-stepper">
+              <button type="button" id="adjDaysDec" aria-label="Menos días">−</button>
+              <input id="adjTripDays" type="number" readonly />
+              <button type="button" id="adjDaysInc" aria-label="Más días">+</button>
+            </div>
+            <p class="quiz-hint" id="adjDaysHint"></p>
+          </div>
+        </section>
+
+        <!-- Calidad alojamiento -->
+        <section class="adjust-section">
+          <h4 class="adjust-section-title">🏨 Calidad del alojamiento</h4>
+          <p class="quiz-hint">Sube o baja la categoría del hotel. Afecta al precio y a los destinos posibles.</p>
+          <div class="stay-tiers stay-tiers-compact" id="adjStayTiers"></div>
+        </section>
+
+        <!-- Estilo del viaje -->
+        <section class="adjust-section">
+          <h4 class="adjust-section-title">🧭 Estilo del viaje</h4>
+          <span class="field-label">Distancia aceptable</span>
+          <div class="choice-row" id="adjTravelRange">
+            <button type="button" class="choice" data-range="short">Vuelo corto</button>
+            <button type="button" class="choice" data-range="medium">Media distancia</button>
+            <button type="button" class="choice" data-range="long">Largo recorrido</button>
+            <button type="button" class="choice" data-range="anywhere">Cualquier sitio</button>
+          </div>
+          <span class="field-label">Tipo de destinos</span>
+          <div class="choice-row" id="adjExplorer">
+            <button type="button" class="choice" data-explorer="highlights">Icónicos</button>
+            <button type="button" class="choice" data-explorer="balanced">Equilibrado</button>
+            <button type="button" class="choice" data-explorer="hidden">Joyas escondidas</button>
+          </div>
+          <span class="field-label">Ritmo</span>
+          <div class="choice-row" id="adjPace">
+            <button type="button" class="choice" data-pace="relax">Relax</button>
+            <button type="button" class="choice" data-pace="balanced">Equilibrado</button>
+            <button type="button" class="choice" data-pace="adventure">Aventura</button>
+          </div>
+        </section>
+
+        <!-- Gastronomía y confort -->
+        <section class="adjust-section">
+          <h4 class="adjust-section-title">🍽️ Gastronomía y confort</h4>
+          <span class="field-label">Intereses gastronómicos</span>
+          <div class="chips chips-multi" id="adjFoodInterests">
+            <button type="button" class="chip" data-food="local">Cocina local</button>
+            <button type="button" class="chip" data-food="street">Street food</button>
+            <button type="button" class="chip" data-food="fine">Alta cocina</button>
+            <button type="button" class="chip" data-food="wine">Vino &amp; viñedos</button>
+            <button type="button" class="chip" data-food="markets">Mercados</button>
+            <button type="button" class="chip" data-food="cooking">Experiencias culinarias</button>
+          </div>
+          <span class="field-label">Dieta</span>
+          <div class="choice-row choice-row-diet" id="adjDietary">
+            <button type="button" class="choice" data-diet="none">Sin restricciones</button>
+            <button type="button" class="choice" data-diet="vegetarian">Vegetariano</button>
+            <button type="button" class="choice" data-diet="vegan">Vegano</button>
+            <button type="button" class="choice" data-diet="glutenfree">Sin gluten</button>
+          </div>
+          <span class="field-label">Comodidad</span>
+          <div class="choice-row" id="adjComfort">
+            <button type="button" class="choice" data-comfort="comfort">Comodidad ante todo</button>
+            <button type="button" class="choice" data-comfort="balanced">Equilibrado</button>
+            <button type="button" class="choice" data-comfort="authentic">Auténtico</button>
+          </div>
+        </section>
+      </div>
+
+      <footer class="adjust-footer">
+        <div class="adjust-preview" id="adjustPreview">
+          <p class="adjust-preview-loading" id="adjustPreviewLoading" hidden>Calculando impacto…</p>
+          <div id="adjustPreviewBody"></div>
+        </div>
+        <p class="adjust-error" id="adjustError" hidden></p>
+        <div class="adjust-actions">
+          <button type="button" class="btn btn-ghost" id="adjustCancel">Cancelar</button>
+          <button type="button" class="btn btn-primary btn-lg" id="adjustApply">Generar nueva propuesta</button>
+        </div>
+      </footer>
+    </aside>
   </div>
 
   <script src="/auth.js"></script>

@@ -44,6 +44,12 @@ const state = {
   livePrice: null,    // precio confirmado por /api/price para la selección actual
   livePriceKey: null,
   priceLoading: false,
+  adjustDraft: null,
+  adjustBaseline: null,
+  adjustPreview: null,
+  adjustPreviewTimer: null,
+  adjustApplying: false,
+  stayTierLocked: false,
 };
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -331,6 +337,7 @@ async function refreshExperienceTiers() {
       invalidateLivePrice();
       renderCalendar();
       updateSummary();
+      renderConfigStrip();
       if (state.selectedDate) refreshPrice();
     }
   } catch (err) {
@@ -368,6 +375,347 @@ $$("#comfortChoice .choice").forEach((c) => c.addEventListener("click", () => {
   c.classList.add("is-selected");
   state.prefs.comfortLevel = c.dataset.comfort;
   scheduleRefineRefresh();
+}));
+
+const BUDGET_LABELS_UI = { budget: "Económico", mid: "Medio", premium: "Premium", luxury: "Lujo" };
+const STAY_LABELS = { comodo: "Cómodo", boutique: "Boutique", villa: "Villa & Lujo" };
+const RANGE_LABELS_UI = { short: "Vuelo corto", medium: "Media distancia", long: "Largo recorrido", anywhere: "Cualquier sitio" };
+const EXPLORER_LABELS_UI = { highlights: "Icónicos", hidden: "Joyas escondidas", balanced: "Equilibrado" };
+const PACE_LABELS_UI = { relax: "Relax", balanced: "Equilibrado", adventure: "Aventura" };
+
+function clonePrefs(p = state.prefs) {
+  return JSON.parse(JSON.stringify(p));
+}
+
+function syncDraftDerived(draft) {
+  const r = TRIP_DAYS_RANGE[draft.tripLength] || TRIP_DAYS_RANGE.short;
+  const days = Math.max(r.minDays, Math.min(r.maxDays, draft.days ?? r.defaultDays));
+  draft.days = days;
+  draft.nights = days - 1;
+  if (!state.stayTierLocked) {
+    draft.stayTier = BUDGET_STAY[draft.budgetTier] ?? "boutique";
+  }
+  draft.hiddenGems = draft.explorerStyle !== "highlights";
+  applyStayTierToDraft(draft);
+}
+
+function applyStayTierToDraft(draft) {
+  if (state.stayTierLocked && draft.stayTier) return;
+  let stay = BUDGET_STAY[draft.budgetTier] ?? "boutique";
+  if (draft.accommodation && draft.accommodation !== "any") {
+    stay = ACCOM_STAY[draft.accommodation] ?? stay;
+  }
+  if (draft.comfortLevel === "comfort") stay = "villa";
+  else if (draft.comfortLevel === "authentic") stay = "comodo";
+  draft.stayTier = stay;
+}
+
+function setDraftDays(days, draft = state.adjustDraft) {
+  if (!draft) return days;
+  const r = TRIP_DAYS_RANGE[draft.tripLength] || TRIP_DAYS_RANGE.short;
+  draft.days = Math.max(r.minDays, Math.min(r.maxDays, days));
+  draft.nights = draft.days - 1;
+  return draft.days;
+}
+
+/* ===================== Ajustar propuesta ===================== */
+function openAdjustPanel() {
+  if (!state.quote) return;
+  state.adjustBaseline = clonePrefs(state.prefs);
+  state.adjustDraft = clonePrefs(state.prefs);
+  state.stayTierLocked = false;
+  state.adjustPreview = null;
+  renderAdjustPanel();
+  const drawer = $("#adjustDrawer");
+  drawer.hidden = false;
+  drawer.setAttribute("aria-hidden", "false");
+  document.body.style.overflow = "hidden";
+  scheduleAdjustPreview();
+}
+
+function closeAdjustPanel() {
+  const drawer = $("#adjustDrawer");
+  if (drawer) { drawer.hidden = true; drawer.setAttribute("aria-hidden", "true"); }
+  document.body.style.overflow = "";
+  state.adjustDraft = null;
+  state.adjustBaseline = null;
+  const err = $("#adjustError");
+  if (err) err.hidden = true;
+}
+
+function renderAdjustStayTiers() {
+  const wrap = $("#adjStayTiers");
+  if (!wrap || !state.adjustDraft) return;
+  const tiers = state.quote?.stayTiers || [];
+  wrap.innerHTML = tiers.map((t) => `
+    <button type="button" class="stay-tier${state.adjustDraft.stayTier === t.id ? " is-selected" : ""}" data-stay="${t.id}">
+      <span class="stay-stars">${"★".repeat(t.stars)}</span>
+      <span class="stay-name">${t.name}</span>
+      <span class="stay-price"><b>${t.priceLevel || "€"}</b> factor hotel ×${t.hotelFactor ?? 1}</span>
+      <span class="stay-desc">${t.stayType || t.tagline || ""}</span>
+    </button>`).join("");
+  $$("#adjStayTiers .stay-tier").forEach((b) => b.addEventListener("click", () => {
+    state.stayTierLocked = true;
+    state.adjustDraft.stayTier = b.dataset.stay;
+    const map = { comodo: ["hotel", "authentic"], boutique: ["boutique", "balanced"], villa: ["resort", "comfort"] };
+    const [accom, comfort] = map[b.dataset.stay] || ["any", "balanced"];
+    state.adjustDraft.accommodation = accom;
+    state.adjustDraft.comfortLevel = comfort;
+    renderAdjustPanel();
+    onAdjustChange();
+  }));
+}
+
+function renderAdjustPanel() {
+  const d = state.adjustDraft;
+  if (!d) return;
+  syncDraftDerived(d);
+
+  $$("#adjBudgetChoice .choice").forEach((c) => c.classList.toggle("is-selected", c.dataset.budget === d.budgetTier));
+  const budgetIn = $("#adjBudgetInput");
+  if (budgetIn) budgetIn.value = d.budget ?? "";
+
+  $$("#adjTripLength .choice").forEach((c) => c.classList.toggle("is-selected", c.dataset.trip === d.tripLength));
+  const daysIn = $("#adjTripDays");
+  const daysHint = $("#adjDaysHint");
+  const r = TRIP_DAYS_RANGE[d.tripLength] || TRIP_DAYS_RANGE.short;
+  if (daysIn) daysIn.value = d.days;
+  if (daysHint) daysHint.textContent = `${r.minDays}–${r.maxDays} días · ${d.nights} ${d.nights === 1 ? "noche" : "noches"}`;
+  $("#adjDaysDec") && ($("#adjDaysDec").disabled = d.days <= r.minDays);
+  $("#adjDaysInc") && ($("#adjDaysInc").disabled = d.days >= r.maxDays);
+
+  renderAdjustStayTiers();
+
+  $$("#adjTravelRange .choice").forEach((c) => c.classList.toggle("is-selected", c.dataset.range === d.travelRange));
+  $$("#adjExplorer .choice").forEach((c) => c.classList.toggle("is-selected", c.dataset.explorer === d.explorerStyle));
+  $$("#adjPace .choice").forEach((c) => c.classList.toggle("is-selected", c.dataset.pace === d.pace));
+
+  $$("#adjFoodInterests .chip").forEach((c) => c.classList.toggle("is-selected", (d.foodInterests || []).includes(c.dataset.food)));
+  $$("#adjDietary .choice").forEach((c) => c.classList.toggle("is-selected", c.dataset.diet === d.dietary));
+  $$("#adjComfort .choice").forEach((c) => c.classList.toggle("is-selected", c.dataset.comfort === d.comfortLevel));
+}
+
+function onAdjustChange() {
+  renderAdjustPanel();
+  scheduleAdjustPreview();
+}
+
+function scheduleAdjustPreview() {
+  clearTimeout(state.adjustPreviewTimer);
+  const loading = $("#adjustPreviewLoading");
+  if (loading) loading.hidden = false;
+  state.adjustPreviewTimer = setTimeout(refreshAdjustPreview, 400);
+}
+
+async function refreshAdjustPreview() {
+  if (!state.adjustDraft || !state.quote) return;
+  const loading = $("#adjustPreviewLoading");
+  try {
+    syncDraftDerived(state.adjustDraft);
+    const res = await fetch("/api/adjust-preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prefs: state.adjustDraft,
+        baseline: state.adjustBaseline,
+        destinations: state.quote.destinations,
+      }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      state.adjustPreview = data;
+      renderAdjustPreview(data);
+    }
+  } catch (err) {
+    console.error("adjust-preview failed", err);
+  } finally {
+    if (loading) loading.hidden = true;
+  }
+}
+
+function renderAdjustPreview(data) {
+  const body = $("#adjustPreviewBody");
+  const minEl = $("#adjBudgetMin");
+  if (!body) return;
+  const range = data.range;
+  const min = data.minBudgetPerPerson;
+  if (minEl) {
+    minEl.innerHTML = Number.isFinite(min)
+      ? `Mínimo estimado con esta configuración: <b>${euro(min)}/persona</b> (vuelo + hotel)`
+      : "";
+  }
+  let html = "";
+  if (range) {
+    html += `<p class="adjust-preview-range">Precio orientativo: <b>${euro(range.low)}</b> – <b>${euro(range.high)}</b>/persona</p>`;
+    html += `<p class="adjust-preview-note">Típico ≈ ${euro(range.typical)}/persona · vuelo + hotel, sin actividades</p>`;
+  }
+  if (data.impacts?.length) {
+    html += `<ul class="adjust-impacts">${data.impacts.map((i) => `<li>${i}</li>`).join("")}</ul>`;
+  }
+  if (data.requiresNewQuote) {
+    html += `<span class="adjust-badge-new">Generará destinos y precios nuevos</span>`;
+  } else {
+    html += `<span class="adjust-preview-note">Los destinos pueden mantenerse; cambian precio y experiencias.</span>`;
+  }
+  body.innerHTML = html;
+}
+
+function renderConfigStrip() {
+  const strip = $("#configStrip");
+  if (!strip || !state.quote) return;
+  const p = state.prefs;
+  const stay = (state.quote.stayTiers || []).find((t) => t.id === p.stayTier);
+  strip.hidden = false;
+  strip.innerHTML = `
+    <span class="config-chip">📅 <b>${p.days || p.nights + 1}</b> días</span>
+    <span class="config-chip">🏨 <b>${stay?.name || STAY_LABELS[p.stayTier] || "Boutique"}</b></span>
+    <span class="config-chip">💶 <b>${Number.isFinite(p.budget) ? euro(p.budget) : BUDGET_LABELS_UI[p.budgetTier]}</b>/p</span>
+    <span class="config-chip">✈️ ${RANGE_LABELS_UI[p.travelRange] || "Media distancia"}</span>
+    <button type="button" class="config-strip-edit" id="configStripEdit">Ajustar →</button>`;
+  $("#configStripEdit")?.addEventListener("click", openAdjustPanel);
+}
+
+function syncRefineUIFromPrefs() {
+  renderFoodInterests();
+  $$("#dietaryChoice .choice").forEach((c) => c.classList.toggle("is-selected", c.dataset.diet === state.prefs.dietary));
+  $$("#accommodationChoice .choice").forEach((c) => c.classList.toggle("is-selected", c.dataset.accom === state.prefs.accommodation));
+  $$("#comfortChoice .choice").forEach((c) => c.classList.toggle("is-selected", c.dataset.comfort === state.prefs.comfortLevel));
+}
+
+async function applyAdjustDraft() {
+  if (!state.adjustDraft || state.adjustApplying) return;
+  const err = $("#adjustError");
+  const btn = $("#adjustApply");
+  syncDraftDerived(state.adjustDraft);
+
+  const min = state.adjustPreview?.minBudgetPerPerson;
+  const budgetVal = parseInt($("#adjBudgetInput")?.value, 10);
+  if (Number.isFinite(budgetVal) && budgetVal > 0) state.adjustDraft.budget = budgetVal;
+  if (Number.isFinite(min) && state.adjustDraft.budget < min) {
+    if (err) {
+      err.textContent = `El presupuesto mínimo con esta configuración es ${euro(min)}/persona. Súbelo o reduce la calidad/duración.`;
+      err.hidden = false;
+    }
+    return;
+  }
+  if (err) err.hidden = true;
+
+  state.adjustApplying = true;
+  if (btn) { btn.disabled = true; btn.textContent = "Generando propuesta…"; }
+
+  Object.assign(state.prefs, state.adjustDraft);
+  syncDerivedPrefs();
+  closeAdjustPanel();
+
+  $("#loading").hidden = false;
+  $("#results").hidden = true;
+  $("#summaryBar").hidden = true;
+
+  try {
+    const res = await fetch("/api/quote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state.prefs),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Error");
+    state.quote = data;
+    state.prefs = data.prefs;
+    state.minBudget = Number.isFinite(data.minBudgetPerPerson) ? data.minBudgetPerPerson : null;
+    state.discarded = new Set();
+    state.selectedDate = null;
+    state.livePrice = null;
+    state.livePriceKey = null;
+    state.priceLoading = false;
+    Object.keys(priceCache).forEach((k) => delete priceCache[k]);
+    state.selectedTier = "none";
+    state.calMonth = startMonth(minDate());
+    $("#loading").hidden = true;
+    syncRefineUIFromPrefs();
+    renderResults();
+    $("#results").hidden = false;
+    $("#summaryBar").hidden = false;
+    $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    $("#loading").hidden = true;
+    $("#results").hidden = false;
+    alert("No hemos podido generar la nueva propuesta. Inténtalo de nuevo.");
+    console.error(e);
+  } finally {
+    state.adjustApplying = false;
+    if (btn) { btn.disabled = false; btn.textContent = "Generar nueva propuesta"; }
+  }
+}
+
+// Eventos del drawer de ajuste
+$("#openAdjust")?.addEventListener("click", openAdjustPanel);
+$("#adjustClose")?.addEventListener("click", closeAdjustPanel);
+$("#adjustCancel")?.addEventListener("click", closeAdjustPanel);
+$("#adjustBackdrop")?.addEventListener("click", closeAdjustPanel);
+$("#adjustApply")?.addEventListener("click", applyAdjustDraft);
+
+$$("#adjBudgetChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  if (!state.adjustDraft) return;
+  state.stayTierLocked = false;
+  state.adjustDraft.budgetTier = c.dataset.budget;
+  state.adjustDraft.budget = BUDGET_ESTIMATE[c.dataset.budget] ?? 550;
+  onAdjustChange();
+}));
+$("#adjBudgetInput")?.addEventListener("input", (e) => {
+  if (!state.adjustDraft) return;
+  const v = parseInt(e.target.value, 10);
+  if (Number.isFinite(v) && v > 0) state.adjustDraft.budget = v;
+  scheduleAdjustPreview();
+});
+$$("#adjTripLength .choice").forEach((c) => c.addEventListener("click", () => {
+  if (!state.adjustDraft) return;
+  state.adjustDraft.tripLength = c.dataset.trip;
+  setDraftDays(TRIP_DAYS_RANGE[c.dataset.trip].defaultDays);
+  onAdjustChange();
+}));
+$("#adjDaysDec")?.addEventListener("click", () => {
+  if (!state.adjustDraft) return;
+  setDraftDays(state.adjustDraft.days - 1);
+  onAdjustChange();
+});
+$("#adjDaysInc")?.addEventListener("click", () => {
+  if (!state.adjustDraft) return;
+  setDraftDays(state.adjustDraft.days + 1);
+  onAdjustChange();
+});
+$$("#adjTravelRange .choice").forEach((c) => c.addEventListener("click", () => {
+  if (!state.adjustDraft) return;
+  state.adjustDraft.travelRange = c.dataset.range;
+  onAdjustChange();
+}));
+$$("#adjExplorer .choice").forEach((c) => c.addEventListener("click", () => {
+  if (!state.adjustDraft) return;
+  state.adjustDraft.explorerStyle = c.dataset.explorer;
+  onAdjustChange();
+}));
+$$("#adjPace .choice").forEach((c) => c.addEventListener("click", () => {
+  if (!state.adjustDraft) return;
+  state.adjustDraft.pace = c.dataset.pace;
+  onAdjustChange();
+}));
+$$("#adjFoodInterests .chip").forEach((c) => c.addEventListener("click", () => {
+  if (!state.adjustDraft) return;
+  const f = c.dataset.food;
+  const arr = state.adjustDraft.foodInterests || (state.adjustDraft.foodInterests = []);
+  const i = arr.indexOf(f);
+  if (i >= 0) arr.splice(i, 1); else arr.push(f);
+  onAdjustChange();
+}));
+$$("#adjDietary .choice").forEach((c) => c.addEventListener("click", () => {
+  if (!state.adjustDraft) return;
+  state.adjustDraft.dietary = c.dataset.diet;
+  onAdjustChange();
+}));
+$$("#adjComfort .choice").forEach((c) => c.addEventListener("click", () => {
+  if (!state.adjustDraft) return;
+  state.stayTierLocked = false;
+  state.adjustDraft.comfortLevel = c.dataset.comfort;
+  onAdjustChange();
 }));
 
 /* ===================== Cotización ===================== */
@@ -500,6 +848,8 @@ function imgSrc(image) {
 function renderResults() {
   $("#resultSource").textContent = state.quote.source === "openai"
     ? "Seleccionado para ti con IA" : "Seleccionado para ti";
+  renderConfigStrip();
+  syncRefineUIFromPrefs();
   renderDestinations();
   renderTiers();
   renderCalendar();
@@ -768,9 +1118,9 @@ function renderCalendar() {
   if (budgetEl) {
     if (Number.isFinite(state.prefs.budget)) {
       budgetEl.hidden = false;
-      budgetEl.innerHTML = `💶 Tu presupuesto: <b>${euro(state.prefs.budget)}/persona</b> · <button type="button" class="cal-budget-edit" id="calBudgetEdit">cambiar</button> · los días por encima aparecen atenuados.`;
+      budgetEl.innerHTML = `💶 Tu presupuesto: <b>${euro(state.prefs.budget)}/persona</b> · <button type="button" class="cal-budget-edit" id="calBudgetEdit">ajustar</button> · los días por encima aparecen atenuados.`;
       const editBtn = $("#calBudgetEdit");
-      if (editBtn) editBtn.addEventListener("click", () => { $("#results").hidden = true; showBudgetGate(); });
+      if (editBtn) editBtn.addEventListener("click", openAdjustPanel);
     } else {
       budgetEl.hidden = true;
     }

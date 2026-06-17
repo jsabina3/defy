@@ -105,6 +105,7 @@ const COMFORT_LABELS = { comfort: "comodidad ante todo", balanced: "equilibrado"
 const ACCOM_LABELS = { hotel: "hotel", boutique: "boutique", resort: "resort", apartment: "apartamento", rural: "rural", any: "indiferente" };
 const FOOD_LABELS = { local: "cocina local", street: "street food", fine: "alta cocina", wine: "vino y viñedos", beer: "cerveza artesanal", markets: "mercados", cooking: "experiencias culinarias" };
 const DIET_LABELS = { none: "sin restricciones", vegetarian: "vegetariano", vegan: "vegano", glutenfree: "sin gluten", halal: "halal", kosher: "kosher" };
+const PACE_LABELS = { relax: "relax", balanced: "equilibrado", adventure: "aventura" };
 
 const BUDGET_TO_STAY = { budget: "comodo", mid: "boutique", premium: "boutique", luxury: "villa" };
 const ACCOM_TO_STAY = { hotel: "comodo", boutique: "boutique", resort: "villa", apartment: "comodo", rural: "comodo" };
@@ -956,6 +957,38 @@ app.post("/api/refine-tiers", async (req, res) => {
   }
 });
 
+// Vista previa del impacto de ajustar presupuesto, duración, hotel, etc.
+app.post("/api/adjust-preview", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const prefs = normalizePrefs(body.prefs || {});
+    const baseline = body.baseline ? normalizePrefs(body.baseline) : null;
+    const requiresNewQuote = detectMajorAdjustChange(baseline, prefs);
+
+    let destinations = Array.isArray(body.destinations) ? body.destinations.slice(0, 12) : [];
+    if (requiresNewQuote || !destinations.length) {
+      const picks = selectDestinations(prefs, CATALOG, PRICING.destinationsShown);
+      destinations = picks.map((p) => buildDestination(p, prefs));
+    }
+
+    const range = estimateRangePerPerson(destinations, prefs);
+    const minBudget = minBudgetPerPerson(destinations, prefs);
+    const impacts = describeAdjustImpacts(baseline, prefs);
+
+    res.json({
+      ok: true,
+      prefs,
+      range,
+      minBudgetPerPerson: minBudget,
+      requiresNewQuote,
+      impacts,
+    });
+  } catch (err) {
+    console.error("/api/adjust-preview failed", err);
+    res.status(500).json({ ok: false, error: "No se pudo previsualizar el ajuste" });
+  }
+});
+
 /* ------------------------------------------------------------------ */
 /* Precios (mismas fórmulas que el front, fuente de verdad)           */
 /* ------------------------------------------------------------------ */
@@ -1076,6 +1109,51 @@ function estimateRangePerPerson(destinations, prefs) {
     typical: at(0.50),
     high: at(0.78),
   };
+}
+
+function detectMajorAdjustChange(baseline, adjusted) {
+  if (!baseline) return true;
+  const keys = ["tripLength", "nights", "budgetTier", "travelRange", "explorerStyle", "pace", "climate"];
+  if (keys.some((k) => baseline[k] !== adjusted[k])) return true;
+  if (JSON.stringify(baseline.vibes || []) !== JSON.stringify(adjusted.vibes || [])) return true;
+  return false;
+}
+
+function describeAdjustImpacts(baseline, adjusted) {
+  if (!baseline) return [];
+  const impacts = [];
+  if (baseline.budgetTier !== adjusted.budgetTier) {
+    impacts.push(`Presupuesto: ${BUDGET_LABELS[baseline.budgetTier] || baseline.budgetTier} → ${BUDGET_LABELS[adjusted.budgetTier] || adjusted.budgetTier}`);
+  }
+  if (baseline.nights !== adjusted.nights) {
+    impacts.push(`Duración: ${baseline.days || baseline.nights + 1} → ${adjusted.days} días`);
+  }
+  if (baseline.stayTier !== adjusted.stayTier) {
+    impacts.push(`Hotel: ${stayInfo(baseline.stayTier).name} → ${stayInfo(adjusted.stayTier).name}`);
+  }
+  if (baseline.travelRange !== adjusted.travelRange) {
+    impacts.push(`Distancia: ${RANGE_LABELS[baseline.travelRange]} → ${RANGE_LABELS[adjusted.travelRange]}`);
+  }
+  if (baseline.explorerStyle !== adjusted.explorerStyle) {
+    impacts.push(`Destinos: ${EXPLORER_LABELS[baseline.explorerStyle]} → ${EXPLORER_LABELS[adjusted.explorerStyle]}`);
+  }
+  if (baseline.pace !== adjusted.pace) {
+    impacts.push(`Ritmo: ${PACE_LABELS?.[baseline.pace] || baseline.pace} → ${PACE_LABELS?.[adjusted.pace] || adjusted.pace}`);
+  }
+  if (Number.isFinite(baseline.budget) && Number.isFinite(adjusted.budget) && baseline.budget !== adjusted.budget) {
+    impacts.push(`Tope: ${baseline.budget} → ${adjusted.budget} €/persona`);
+  }
+  const foodNew = (adjusted.foodInterests || []).filter((f) => !(baseline.foodInterests || []).includes(f));
+  if (foodNew.length) {
+    impacts.push(`Gastronomía: +${foodNew.map((f) => FOOD_LABELS[f] || f).join(", ")}`);
+  }
+  if (baseline.dietary !== adjusted.dietary && adjusted.dietary !== "none") {
+    impacts.push(`Dieta: ${DIET_LABELS[adjusted.dietary] || adjusted.dietary}`);
+  }
+  if (baseline.comfortLevel !== adjusted.comfortLevel) {
+    impacts.push(`Comodidad: ${COMFORT_LABELS[baseline.comfortLevel]} → ${COMFORT_LABELS[adjusted.comfortLevel]}`);
+  }
+  return impacts;
 }
 
 function estimatePrefsCompleteness(prefs) {
