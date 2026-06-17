@@ -742,6 +742,16 @@ em {
 }
 .adjust-min-note { display: block; color: var(--ink-soft); font-size: 0.82rem; margin-top: 0.35rem; }
 .adjust-min-note b { color: var(--coral); }
+.adjust-cal-min {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 1rem;
+  padding: 1rem 1.1rem; margin-bottom: 0.8rem;
+  background: rgba(95,216,151,0.08); border: 1px solid rgba(95,216,151,0.35); border-radius: var(--radius-sm);
+}
+.adjust-cal-min-label { font-size: 0.82rem; font-weight: 600; color: var(--ink-soft); width: 100%; }
+.adjust-cal-min-value { font-family: var(--serif); font-size: 1.65rem; font-weight: 700; color: #5fd897; line-height: 1; }
+.adjust-cal-min-date { font-size: 0.82rem; color: var(--ink-soft); }
+.budget-stepper { max-width: 220px; margin-top: 0.45rem; }
+.budget-stepper input { width: 90px; font-size: 1.15rem; font-weight: 700; }
 .adjust-error { color: #ff8a73; font-size: 0.88rem; margin-bottom: 0.8rem; font-weight: 600; }
 .adjust-actions { display: flex; gap: 0.7rem; justify-content: flex-end; flex-wrap: wrap; }
 .adjust-preview-loading { color: var(--ink-soft); font-style: italic; margin: 0; }

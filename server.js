@@ -971,15 +971,15 @@ app.post("/api/adjust-preview", async (req, res) => {
       destinations = picks.map((p) => buildDestination(p, prefs));
     }
 
-    const range = estimateRangePerPerson(destinations, prefs);
-    const minBudget = minBudgetPerPerson(destinations, prefs);
+    const calMin = calendarMinPerPerson(destinations, prefs);
     const impacts = describeAdjustImpacts(baseline, prefs);
 
     res.json({
       ok: true,
       prefs,
-      range,
-      minBudgetPerPerson: minBudget,
+      calendarMinPerPerson: calMin?.min ?? null,
+      calendarMinDate: calMin?.minDate ?? null,
+      minBudgetPerPerson: calMin?.min ?? null,
       requiresNewQuote,
       impacts,
     });
@@ -1068,26 +1068,33 @@ function providerChargedSync(dest, dateStr, prefs, stayFactor) {
   return flight + hotel + transfer;
 }
 
-// Presupuesto MÍNIMO por persona (vuelo + hotel, sin actividades) que el cliente
-// podría pagar con SU configuración: el precio sorpresa más bajo a lo largo del
-// próximo año, replicando la misma fórmula que el calendario. Es el "suelo" que
-// el sistema define a partir de los precios encontrados y de las opciones
-// elegidas (destinos, noches, viajeros, nivel de alojamiento, ciudad de salida),
-// antes de pedirle al cliente su presupuesto.
-function minBudgetPerPerson(destinations, prefs) {
+// Presupuesto MÍNIMO del calendario: mismo cálculo que cada celda del calendario
+// (percentil anchorPercentile, redondeo a 10 € total y a 5 €/persona).
+function calendarPricePerPerson(destinations, dateStr, prefs) {
   if (!destinations.length) return null;
   const stayFactor = stayTierFactor(prefs.stayTier);
   const travelers = prefs.travelers || 1;
+  const all = destinations.map((d) => providerChargedSync(d, dateStr, prefs, stayFactor));
+  const total = Math.ceil(percentile(all, PRICING.anchorPercentile) / 10) * 10;
+  return Math.ceil((total / travelers) / 5) * 5;
+}
+
+function calendarMinPerPerson(destinations, prefs) {
+  if (!destinations.length) return null;
   const startStr = addDays(todayStr(), 10);
   let min = Infinity;
+  let minDate = null;
   for (let i = 0; i < 365; i++) {
     const ds = addDays(startStr, i);
-    const all = destinations.map((d) => providerChargedSync(d, ds, prefs, stayFactor));
-    const base = Math.ceil(percentile(all, PRICING.anchorPercentile) / 10) * 10;
-    const per = Math.ceil((base / travelers) / 5) * 5;
-    if (per < min) min = per;
+    const per = calendarPricePerPerson(destinations, ds, prefs);
+    if (per != null && per < min) { min = per; minDate = ds; }
   }
-  return Number.isFinite(min) ? min : null;
+  return Number.isFinite(min) ? { min, minDate } : null;
+}
+
+function minBudgetPerPerson(destinations, prefs) {
+  const r = calendarMinPerPerson(destinations, prefs);
+  return r ? r.min : null;
 }
 
 function estimateRangePerPerson(destinations, prefs) {

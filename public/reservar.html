@@ -353,21 +353,28 @@
         <!-- Presupuesto -->
         <section class="adjust-section">
           <h4 class="adjust-section-title">💶 Presupuesto</h4>
-          <span class="field-label">Nivel de presupuesto</span>
+          <div class="adjust-cal-min" id="adjCalMin">
+            <span class="adjust-cal-min-label">Mejor precio en calendario</span>
+            <span class="adjust-cal-min-value" id="adjCalMinValue">—</span>
+            <span class="adjust-cal-min-date" id="adjCalMinDate"></span>
+          </div>
+          <p class="quiz-hint">Es el día más barato que verás en el calendario (vuelo + hotel, sin actividades). Ajusta tu tope desde ahí.</p>
+          <label class="field budget-input-field">
+            <span>Tu presupuesto tope por persona</span>
+            <div class="stepper trip-days-stepper budget-stepper">
+              <button type="button" id="adjBudgetDec" aria-label="Reducir presupuesto">−</button>
+              <input id="adjBudgetInput" type="number" inputmode="numeric" step="5" min="50" />
+              <button type="button" id="adjBudgetInc" aria-label="Aumentar presupuesto">+</button>
+            </div>
+            <small class="adjust-min-note" id="adjBudgetMin"></small>
+          </label>
+          <span class="field-label">Nivel orientativo</span>
           <div class="choice-row choice-row-budget" id="adjBudgetChoice">
             <button type="button" class="choice" data-budget="budget">Económico</button>
             <button type="button" class="choice" data-budget="mid">Medio</button>
             <button type="button" class="choice" data-budget="premium">Premium</button>
             <button type="button" class="choice" data-budget="luxury">Lujo</button>
           </div>
-          <label class="field budget-input-field">
-            <span>Presupuesto máximo por persona</span>
-            <div class="budget-input-wrap">
-              <input id="adjBudgetInput" type="number" inputmode="numeric" step="10" min="50" />
-              <span class="budget-unit">€ / persona</span>
-            </div>
-            <small class="adjust-min-note" id="adjBudgetMin"></small>
-          </label>
         </section>
 
         <!-- Duración -->

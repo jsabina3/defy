@@ -50,6 +50,8 @@ const state = {
   adjustPreviewTimer: null,
   adjustApplying: false,
   stayTierLocked: false,
+  calendarMin: null,
+  calendarMinDate: null,
 };
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -335,6 +337,7 @@ async function refreshExperienceTiers() {
       if (data.prefs) state.prefs = { ...state.prefs, ...data.prefs };
       renderTiers();
       invalidateLivePrice();
+      updateCalendarMin();
       renderCalendar();
       updateSummary();
       renderConfigStrip();
@@ -423,6 +426,7 @@ function openAdjustPanel() {
   if (!state.quote) return;
   state.adjustBaseline = clonePrefs(state.prefs);
   state.adjustDraft = clonePrefs(state.prefs);
+  state.adjustDraft.budgetManual = true;
   state.stayTierLocked = false;
   state.adjustPreview = null;
   renderAdjustPanel();
@@ -536,26 +540,45 @@ async function refreshAdjustPreview() {
 function renderAdjustPreview(data) {
   const body = $("#adjustPreviewBody");
   const minEl = $("#adjBudgetMin");
-  if (!body) return;
-  const range = data.range;
-  const min = data.minBudgetPerPerson;
-  if (minEl) {
-    minEl.innerHTML = Number.isFinite(min)
-      ? `Mínimo estimado con esta configuración: <b>${euro(min)}/persona</b> (vuelo + hotel)`
+  const calMin = data.calendarMinPerPerson ?? data.minBudgetPerPerson;
+  const calMinDate = data.calendarMinDate;
+
+  $("#adjCalMinValue").textContent = Number.isFinite(calMin) ? `${euro(calMin)}/persona` : "—";
+  const dateEl = $("#adjCalMinDate");
+  if (dateEl) {
+    dateEl.textContent = calMinDate
+      ? ` · salida ${new Date(calMinDate + "T12:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}`
       : "";
   }
-  let html = "";
-  if (range) {
-    html += `<p class="adjust-preview-range">Precio orientativo: <b>${euro(range.low)}</b> – <b>${euro(range.high)}</b>/persona</p>`;
-    html += `<p class="adjust-preview-note">Típico ≈ ${euro(range.typical)}/persona · vuelo + hotel, sin actividades</p>`;
+
+  const budgetIn = $("#adjBudgetInput");
+  const dec = $("#adjBudgetDec");
+  const inc = $("#adjBudgetInc");
+  if (state.adjustDraft && Number.isFinite(calMin)) {
+    budgetIn.min = calMin;
+    if (!state.adjustDraft.budgetManual) {
+      state.adjustDraft.budget = Math.max(calMin, state.adjustDraft.budget || calMin);
+    } else if (state.adjustDraft.budget < calMin) {
+      state.adjustDraft.budget = calMin;
+    }
+    if (budgetIn) budgetIn.value = state.adjustDraft.budget;
+    if (dec) dec.disabled = state.adjustDraft.budget <= calMin;
   }
+  if (minEl) {
+    minEl.innerHTML = Number.isFinite(calMin)
+      ? `No puedes bajar de <b>${euro(calMin)}/persona</b> — es el mínimo del calendario con esta configuración.`
+      : "";
+  }
+
+  if (!body) return;
+  let html = "";
   if (data.impacts?.length) {
     html += `<ul class="adjust-impacts">${data.impacts.map((i) => `<li>${i}</li>`).join("")}</ul>`;
   }
   if (data.requiresNewQuote) {
     html += `<span class="adjust-badge-new">Generará destinos y precios nuevos</span>`;
-  } else {
-    html += `<span class="adjust-preview-note">Los destinos pueden mantenerse; cambian precio y experiencias.</span>`;
+  } else if (Number.isFinite(calMin)) {
+    html += `<span class="adjust-preview-note">Los destinos se mantienen; el calendario se recalculará con tu nuevo tope.</span>`;
   }
   body.innerHTML = html;
 }
@@ -565,11 +588,13 @@ function renderConfigStrip() {
   if (!strip || !state.quote) return;
   const p = state.prefs;
   const stay = (state.quote.stayTiers || []).find((t) => t.id === p.stayTier);
+  const calMin = state.calendarMin;
   strip.hidden = false;
   strip.innerHTML = `
     <span class="config-chip">📅 <b>${p.days || p.nights + 1}</b> días</span>
     <span class="config-chip">🏨 <b>${stay?.name || STAY_LABELS[p.stayTier] || "Boutique"}</b></span>
-    <span class="config-chip">💶 <b>${Number.isFinite(p.budget) ? euro(p.budget) : BUDGET_LABELS_UI[p.budgetTier]}</b>/p</span>
+    <span class="config-chip">💶 desde <b>${Number.isFinite(calMin) ? euro(calMin) : "—"}</b>/p</span>
+    ${Number.isFinite(p.budget) ? `<span class="config-chip">tope <b>${euro(p.budget)}</b>/p</span>` : ""}
     <span class="config-chip">✈️ ${RANGE_LABELS_UI[p.travelRange] || "Media distancia"}</span>
     <button type="button" class="config-strip-edit" id="configStripEdit">Ajustar →</button>`;
   $("#configStripEdit")?.addEventListener("click", openAdjustPanel);
@@ -588,7 +613,7 @@ async function applyAdjustDraft() {
   const btn = $("#adjustApply");
   syncDraftDerived(state.adjustDraft);
 
-  const min = state.adjustPreview?.minBudgetPerPerson;
+  const min = state.adjustPreview?.calendarMinPerPerson ?? state.adjustPreview?.minBudgetPerPerson;
   const budgetVal = parseInt($("#adjBudgetInput")?.value, 10);
   if (Number.isFinite(budgetVal) && budgetVal > 0) state.adjustDraft.budget = budgetVal;
   if (Number.isFinite(min) && state.adjustDraft.budget < min) {
@@ -604,6 +629,7 @@ async function applyAdjustDraft() {
   if (btn) { btn.disabled = true; btn.textContent = "Generando propuesta…"; }
 
   Object.assign(state.prefs, state.adjustDraft);
+  const savedBudget = state.adjustDraft.budget;
   syncDerivedPrefs();
   closeAdjustPanel();
 
@@ -621,6 +647,7 @@ async function applyAdjustDraft() {
     if (!data.ok) throw new Error(data.error || "Error");
     state.quote = data;
     state.prefs = data.prefs;
+    if (Number.isFinite(savedBudget)) state.prefs.budget = savedBudget;
     state.minBudget = Number.isFinite(data.minBudgetPerPerson) ? data.minBudgetPerPerson : null;
     state.discarded = new Set();
     state.selectedDate = null;
@@ -631,6 +658,7 @@ async function applyAdjustDraft() {
     state.selectedTier = "none";
     state.calMonth = startMonth(minDate());
     $("#loading").hidden = true;
+    updateCalendarMin();
     syncRefineUIFromPrefs();
     renderResults();
     $("#results").hidden = false;
@@ -658,14 +686,34 @@ $$("#adjBudgetChoice .choice").forEach((c) => c.addEventListener("click", () => 
   if (!state.adjustDraft) return;
   state.stayTierLocked = false;
   state.adjustDraft.budgetTier = c.dataset.budget;
-  state.adjustDraft.budget = BUDGET_ESTIMATE[c.dataset.budget] ?? 550;
+  state.adjustDraft.budgetManual = false;
   onAdjustChange();
 }));
+function setAdjustBudget(val, manual = true) {
+  if (!state.adjustDraft) return;
+  const min = state.adjustPreview?.calendarMinPerPerson ?? state.adjustPreview?.minBudgetPerPerson ?? 50;
+  const v = Math.max(min, Math.round(val / 5) * 5);
+  state.adjustDraft.budget = v;
+  if (manual) state.adjustDraft.budgetManual = true;
+  const budgetIn = $("#adjBudgetInput");
+  if (budgetIn) budgetIn.value = v;
+  $("#adjBudgetDec") && ($("#adjBudgetDec").disabled = v <= min);
+  scheduleAdjustPreview();
+}
 $("#adjBudgetInput")?.addEventListener("input", (e) => {
   if (!state.adjustDraft) return;
   const v = parseInt(e.target.value, 10);
-  if (Number.isFinite(v) && v > 0) state.adjustDraft.budget = v;
+  if (Number.isFinite(v) && v > 0) {
+    state.adjustDraft.budget = v;
+    state.adjustDraft.budgetManual = true;
+  }
   scheduleAdjustPreview();
+});
+$("#adjBudgetDec")?.addEventListener("click", () => {
+  setAdjustBudget((state.adjustDraft?.budget || 0) - 5);
+});
+$("#adjBudgetInc")?.addEventListener("click", () => {
+  setAdjustBudget((state.adjustDraft?.budget || 0) + 5);
 });
 $$("#adjTripLength .choice").forEach((c) => c.addEventListener("click", () => {
   if (!state.adjustDraft) return;
@@ -848,6 +896,7 @@ function imgSrc(image) {
 function renderResults() {
   $("#resultSource").textContent = state.quote.source === "openai"
     ? "Seleccionado para ti con IA" : "Seleccionado para ti";
+  updateCalendarMin();
   renderConfigStrip();
   syncRefineUIFromPrefs();
   renderDestinations();
@@ -1029,30 +1078,66 @@ function currentTier() {
 function isWeekend(dateStr) { const d = new Date(dateStr + "T12:00:00").getDay(); return d === 5 || d === 6; }
 function monthIndex(dateStr) { return new Date(dateStr + "T12:00:00").getMonth(); }
 
-// Factor del nivel de viaje elegido (escala el hotel). Llega del servidor en
-// state.quote.stayTiers; por defecto "boutique" (factor 1).
-function stayFactor() {
+// Factor del nivel de alojamiento para unos prefs concretos.
+function stayFactorFor(prefs = state.prefs) {
   const tiers = state.quote?.stayTiers || [];
-  const t = tiers.find((x) => x.id === state.prefs.stayTier)
+  const t = tiers.find((x) => x.id === prefs.stayTier)
     || tiers.find((x) => x.recommended) || tiers[0];
   return t ? t.hotelFactor : 1;
 }
 
-// Coste-con-margen de PROVEEDOR (vuelo + hotel + traslado) de un destino para una
-// fecha. NO incluye actividades (uniformes, se suman al ancla).
-function providerCharged(dest, dateStr) {
+function providerCharged(dest, dateStr, prefs = state.prefs) {
   const p = state.quote.pricing;
   const m = monthIndex(dateStr);
   const season = dest.seasonality[m];
   const weekend = isWeekend(dateStr) ? 1 + p.weekendPremium : 1;
-  const nights = state.prefs.nights;
-  const travelers = state.prefs.travelers;
+  const nights = prefs.nights;
+  const travelers = prefs.travelers;
   const rooms = Math.ceil(travelers / p.peoplePerRoom);
+  const sf = stayFactorFor(prefs);
 
   const flight = dest.flightPerPerson * season * weekend * travelers * p.markups.flight;
-  const hotel = dest.hotelPerNight * stayFactor() * season * nights * rooms * p.markups.hotel;
+  const hotel = dest.hotelPerNight * sf * season * nights * rooms * p.markups.hotel;
   const transfer = dest.transferCost * travelers * p.markups.transfer;
   return flight + hotel + transfer;
+}
+
+// Precio sorpresa (ancla) idéntico al calendario.
+function surpriseCharged(dateStr, tier, prefs = state.prefs, destinations = state.quote?.destinations) {
+  const p = state.quote.pricing;
+  const dests = destinations || [];
+  const all = dests.map((d) => providerCharged(d, dateStr, prefs));
+  const base = percentile(all, p.anchorPercentile ?? 0.5);
+  const activity = (tier.pricePerPerson ?? (tier.perPersonCost || 0)) * prefs.travelers;
+  return roundUpTo(base + activity, 10);
+}
+
+// Mínimo del calendario (misma fórmula que las celdas) para unos prefs/destinos.
+function calendarMinPerPerson(prefs = state.prefs, destinations = state.quote?.destinations) {
+  const dests = destinations || [];
+  if (!dests.length) return null;
+  const tier = { perPersonCost: 0, pricePerPerson: 0 };
+  const start = minDate();
+  start.setHours(0, 0, 0, 0);
+  let lowest = Infinity;
+  let lowestDate = null;
+  for (let i = 0; i < 365; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    const ds = fmt(d);
+    const per = roundUpTo(surpriseCharged(ds, tier, prefs, dests) / prefs.travelers, 5);
+    if (per < lowest) { lowest = per; lowestDate = ds; }
+  }
+  return Number.isFinite(lowest) ? { min: lowest, minDate: lowestDate } : null;
+}
+
+function updateCalendarMin() {
+  const r = calendarMinPerPerson();
+  state.calendarMin = r?.min ?? null;
+  state.calendarMinDate = r?.minDate ?? null;
+  if (Number.isFinite(state.calendarMin) && (!Number.isFinite(state.prefs.budget) || state.prefs.budget < state.calendarMin)) {
+    state.prefs.budget = state.calendarMin;
+  }
 }
 
 // Percentil con interpolación lineal (idéntico al servidor).
@@ -1063,17 +1148,6 @@ function percentile(arr, q) {
   const idx = (s.length - 1) * q;
   const lo = Math.floor(idx), hi = Math.ceil(idx);
   return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (idx - lo);
-}
-
-// Precio sorpresa (ancla): percentil del precio de TODOS los destinos ofertados
-// (no solo los activos) + actividades. Es estable: descartar destinos NO cambia
-// el precio, así que nunca revela cuál era el barato.
-function surpriseCharged(dateStr, tier) {
-  const p = state.quote.pricing;
-  const all = state.quote.destinations.map((d) => providerCharged(d, dateStr));
-  const base = percentile(all, p.anchorPercentile ?? 0.5);
-  const activity = (tier.pricePerPerson ?? (tier.perPersonCost || 0)) * state.prefs.travelers;
-  return roundUpTo(base + activity, 10);
 }
 
 /* ===================== Calendario ===================== */
@@ -1118,7 +1192,9 @@ function renderCalendar() {
   if (budgetEl) {
     if (Number.isFinite(state.prefs.budget)) {
       budgetEl.hidden = false;
-      budgetEl.innerHTML = `💶 Tu presupuesto: <b>${euro(state.prefs.budget)}/persona</b> · <button type="button" class="cal-budget-edit" id="calBudgetEdit">ajustar</button> · los días por encima aparecen atenuados.`;
+      const calMin = state.calendarMin;
+      const minNote = Number.isFinite(calMin) ? `Mejor precio: <b>${euro(calMin)}</b>/persona · ` : "";
+      budgetEl.innerHTML = `💶 ${minNote}Tope: <b>${euro(state.prefs.budget)}/persona</b> · <button type="button" class="cal-budget-edit" id="calBudgetEdit">ajustar</button> · los días por encima del tope aparecen atenuados.`;
       const editBtn = $("#calBudgetEdit");
       if (editBtn) editBtn.addEventListener("click", openAdjustPanel);
     } else {
