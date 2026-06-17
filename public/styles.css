@@ -429,6 +429,11 @@ em {
 .choice-row-budget .choice { min-width: 130px; }
 .choice-row-diet .choice { min-width: 140px; flex: 0 1 auto; }
 
+/* Selector de días tras elegir duración */
+.trip-days-field { margin: 1rem 0 1.4rem; padding: 1rem 1.1rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--field-bg); }
+.trip-days-stepper { display: inline-flex; max-width: 200px; }
+.trip-days-stepper input { width: 72px; font-size: 1.2rem; font-weight: 700; }
+
 /* Explicación del ritmo de viaje (se rellena según la opción elegida) */
 .pace-explain {
   margin-top: 0.8rem; font-size: 0.88rem; color: var(--ink-soft);

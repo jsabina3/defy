@@ -157,6 +157,16 @@
           <button type="button" class="choice" data-trip="long">🌍 Largo<small>2+ semanas</small></button>
         </div>
 
+        <div class="trip-days-field" id="tripDaysField">
+          <span class="field-label">¿Cuántos días exactamente?</span>
+          <div class="stepper trip-days-stepper">
+            <button type="button" id="tripDaysDec" aria-label="Menos días">−</button>
+            <input id="tripDays" type="number" readonly aria-label="Días de viaje" />
+            <button type="button" id="tripDaysInc" aria-label="Más días">+</button>
+          </div>
+          <p class="quiz-hint" id="tripDaysHint"></p>
+        </div>
+
         <span class="field-label">¿Hasta dónde estás dispuesto a volar?</span>
         <p class="quiz-hint">Nos ayuda a recomendar destinos a la distancia correcta.</p>
         <div class="choice-row" id="travelRangeChoice">

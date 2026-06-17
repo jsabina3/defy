@@ -1,7 +1,13 @@
 /* ===================== Estado ===================== */
 const MAX_VIBES = 3;
-const TRIP_NIGHTS = { weekend: 1, short: 4, medium: 10, long: 14 };
+const TRIP_DAYS_RANGE = {
+  weekend: { minDays: 2, maxDays: 3, defaultDays: 2 },
+  short: { minDays: 4, maxDays: 7, defaultDays: 5 },
+  medium: { minDays: 8, maxDays: 14, defaultDays: 11 },
+  long: { minDays: 15, maxDays: 22, defaultDays: 15 },
+};
 const BUDGET_STAY = { budget: "comodo", mid: "boutique", premium: "boutique", luxury: "villa" };
+const ACCOM_STAY = { hotel: "comodo", boutique: "boutique", resort: "villa", apartment: "comodo", rural: "comodo" };
 const BUDGET_ESTIMATE = { budget: 350, mid: 550, premium: 850, luxury: 1400 };
 
 const state = {
@@ -9,6 +15,7 @@ const state = {
   prefs: {
     departureCity: "Madrid",
     travelers: 2,
+    days: 5,
     nights: 4,
     tripLength: "short",
     vibes: [],          // hasta 3, ordenadas por prioridad
@@ -73,11 +80,52 @@ const prevBtn = $("#quizPrev");
 const nextBtn = $("#quizNext");
 const quizError = $("#quizError");
 
+function tripDaysRange(trip = state.prefs.tripLength) {
+  return TRIP_DAYS_RANGE[trip] || TRIP_DAYS_RANGE.short;
+}
+
+function clampTripDays(days, trip = state.prefs.tripLength) {
+  const r = tripDaysRange(trip);
+  return Math.max(r.minDays, Math.min(r.maxDays, days));
+}
+
+function setTripDays(days, trip = state.prefs.tripLength) {
+  const d = clampTripDays(days, trip);
+  state.prefs.days = d;
+  state.prefs.nights = d - 1;
+  return d;
+}
+
+function applyStayTier() {
+  let stay = BUDGET_STAY[state.prefs.budgetTier] ?? "boutique";
+  if (state.prefs.accommodation && state.prefs.accommodation !== "any") {
+    stay = ACCOM_STAY[state.prefs.accommodation] ?? stay;
+  }
+  if (state.prefs.comfortLevel === "comfort") stay = "villa";
+  else if (state.prefs.comfortLevel === "authentic") stay = "comodo";
+  state.prefs.stayTier = stay;
+}
+
 function syncDerivedPrefs() {
-  state.prefs.nights = TRIP_NIGHTS[state.prefs.tripLength] ?? 4;
-  state.prefs.stayTier = BUDGET_STAY[state.prefs.budgetTier] ?? "boutique";
+  setTripDays(state.prefs.days ?? tripDaysRange().defaultDays);
+  applyStayTier();
   state.prefs.hiddenGems = state.prefs.explorerStyle !== "highlights";
   if (!state.prefs.budget) state.prefs.budget = BUDGET_ESTIMATE[state.prefs.budgetTier] ?? 550;
+}
+
+function renderTripDays() {
+  const r = tripDaysRange();
+  const days = setTripDays(state.prefs.days ?? r.defaultDays);
+  const input = $("#tripDays");
+  const hint = $("#tripDaysHint");
+  const dec = $("#tripDaysDec");
+  const inc = $("#tripDaysInc");
+  if (input) input.value = days;
+  if (hint) {
+    hint.textContent = `${r.minDays}–${r.maxDays} días en esta categoría · ${days - 1} ${days - 1 === 1 ? "noche" : "noches"}`;
+  }
+  if (dec) dec.disabled = days <= r.minDays;
+  if (inc) inc.disabled = days >= r.maxDays;
 }
 
 function validateStep(n) {
@@ -220,15 +268,18 @@ $$("#budgetChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#budgetChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected");
   state.prefs.budgetTier = c.dataset.budget;
-  state.prefs.stayTier = BUDGET_STAY[state.prefs.budgetTier] ?? "boutique";
   state.prefs.budget = BUDGET_ESTIMATE[state.prefs.budgetTier] ?? 550;
+  applyStayTier();
 }));
 $$("#tripLengthChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#tripLengthChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected");
   state.prefs.tripLength = c.dataset.trip;
-  state.prefs.nights = TRIP_NIGHTS[state.prefs.tripLength] ?? 4;
+  setTripDays(tripDaysRange(c.dataset.trip).defaultDays, c.dataset.trip);
+  renderTripDays();
 }));
+$("#tripDaysDec")?.addEventListener("click", () => { setTripDays((state.prefs.days || 2) - 1); renderTripDays(); });
+$("#tripDaysInc")?.addEventListener("click", () => { setTripDays((state.prefs.days || 2) + 1); renderTripDays(); });
 $$("#travelRangeChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#travelRangeChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected");
@@ -253,7 +304,40 @@ $$("#paceChoice .choice").forEach((c) => c.addEventListener("click", () => {
 }));
 updatePaceExplain();
 
-// Refinamiento post-destino (paso experiencia)
+// Refinamiento post-destino (paso experiencia) — recalcula packs y precio
+let refineTimer = null;
+function scheduleRefineRefresh() {
+  applyStayTier();
+  clearTimeout(refineTimer);
+  refineTimer = setTimeout(refreshExperienceTiers, 500);
+}
+
+async function refreshExperienceTiers() {
+  if (!state.quote?.destinations?.length) return;
+  try {
+    const res = await fetch("/api/refine-tiers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prefs: state.prefs,
+        destinations: state.quote.destinations,
+      }),
+    });
+    const data = await res.json();
+    if (data.ok && Array.isArray(data.tiers)) {
+      state.quote.tiers = data.tiers;
+      if (data.prefs) state.prefs = { ...state.prefs, ...data.prefs };
+      renderTiers();
+      invalidateLivePrice();
+      renderCalendar();
+      updateSummary();
+      if (state.selectedDate) refreshPrice();
+    }
+  } catch (err) {
+    console.error("refine-tiers failed", err);
+  }
+}
+
 function renderFoodInterests() {
   $$("#foodInterests .chip").forEach((chip) => {
     chip.classList.toggle("is-selected", state.prefs.foodInterests.includes(chip.dataset.food));
@@ -265,26 +349,25 @@ $$("#foodInterests .chip").forEach((c) => c.addEventListener("click", () => {
   if (i >= 0) state.prefs.foodInterests.splice(i, 1);
   else state.prefs.foodInterests.push(f);
   renderFoodInterests();
+  scheduleRefineRefresh();
 }));
 $$("#dietaryChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#dietaryChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected");
   state.prefs.dietary = c.dataset.diet;
+  scheduleRefineRefresh();
 }));
 $$("#accommodationChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#accommodationChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected");
   state.prefs.accommodation = c.dataset.accom;
-  const accomStay = { hotel: "comodo", boutique: "boutique", resort: "villa", apartment: "comodo", rural: "comodo", any: state.prefs.stayTier };
-  if (c.dataset.accom !== "any") state.prefs.stayTier = accomStay[c.dataset.accom] ?? state.prefs.stayTier;
+  scheduleRefineRefresh();
 }));
 $$("#comfortChoice .choice").forEach((c) => c.addEventListener("click", () => {
   $$("#comfortChoice .choice").forEach((x) => x.classList.remove("is-selected"));
   c.classList.add("is-selected");
   state.prefs.comfortLevel = c.dataset.comfort;
-  if (c.dataset.comfort === "comfort") state.prefs.stayTier = "villa";
-  else if (c.dataset.comfort === "authentic") state.prefs.stayTier = "comodo";
-  else state.prefs.stayTier = BUDGET_STAY[state.prefs.budgetTier] ?? "boutique";
+  scheduleRefineRefresh();
 }));
 
 /* ===================== Cotización ===================== */
@@ -670,7 +753,8 @@ function updateTripCaption() {
   const end = new Date(r.end + "T12:00:00").toLocaleDateString("es-ES", opts);
   const nights = state.prefs.nights;
   cap.hidden = false;
-  cap.innerHTML = `🧳 Tu viaje: <b>${start}</b> → <b>${end}</b> · ${nights + 1} días, ${nights} ${nights === 1 ? "noche" : "noches"} (resaltados en el calendario)`;
+  const days = state.prefs.days || nights + 1;
+  cap.innerHTML = `🧳 Tu viaje: <b>${start}</b> → <b>${end}</b> · ${days} días, ${nights} ${nights === 1 ? "noche" : "noches"} (resaltados en el calendario)`;
 }
 
 function renderCalendar() {
@@ -770,7 +854,7 @@ function updateSummary() {
   const stayName = stay ? stay.name : "";
 
   if (!state.selectedDate) {
-    $("#summaryLine").textContent = `${state.prefs.travelers} viajeros · ${state.prefs.nights + 1} días · ${stayName ? stayName + " · " : ""}${tierName}`;
+    $("#summaryLine").textContent = `${state.prefs.travelers} viajeros · ${state.prefs.days || state.prefs.nights + 1} días · ${stayName ? stayName + " · " : ""}${tierName}`;
     $("#summaryTotal").textContent = "Elige fecha";
     $("#summaryPer").textContent = "";
     updateResultNav();
@@ -1100,5 +1184,6 @@ $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") 
 renderAges();
 renderVibesPriority();
 renderFoodInterests();
+renderTripDays();
 syncDerivedPrefs();
 showStep(0);

@@ -107,8 +107,29 @@ const FOOD_LABELS = { local: "cocina local", street: "street food", fine: "alta 
 const DIET_LABELS = { none: "sin restricciones", vegetarian: "vegetariano", vegan: "vegano", glutenfree: "sin gluten", halal: "halal", kosher: "kosher" };
 
 const BUDGET_TO_STAY = { budget: "comodo", mid: "boutique", premium: "boutique", luxury: "villa" };
-const TRIP_NIGHTS = { weekend: 1, short: 4, medium: 10, long: 14 };
+const ACCOM_TO_STAY = { hotel: "comodo", boutique: "boutique", resort: "villa", apartment: "comodo", rural: "comodo" };
+const TRIP_NIGHTS_RANGE = {
+  weekend: { min: 1, max: 2, default: 1 },
+  short: { min: 3, max: 6, default: 4 },
+  medium: { min: 7, max: 13, default: 10 },
+  long: { min: 14, max: 21, default: 14 },
+};
 const BUDGET_ESTIMATE = { budget: 350, mid: 550, premium: 850, luxury: 1400 };
+
+function resolveStayTier(p) {
+  const budgetTier = ["budget", "mid", "premium", "luxury"].includes(p.budgetTier) ? p.budgetTier : "mid";
+  let stay = BUDGET_TO_STAY[budgetTier] || "boutique";
+  const accom = p.accommodation || "any";
+  if (accom !== "any" && ACCOM_TO_STAY[accom]) stay = ACCOM_TO_STAY[accom];
+  const comfort = p.comfortLevel || "balanced";
+  if (comfort === "comfort") stay = "villa";
+  else if (comfort === "authentic") stay = "comodo";
+  return stay;
+}
+
+function tripNightsRange(tripLength) {
+  return TRIP_NIGHTS_RANGE[tripLength] || TRIP_NIGHTS_RANGE.short;
+}
 
 // Texto legible de las edades del grupo para los prompts de IA. Prefiere la
 // lista de edades por viajero; si no hay, cae a la media.
@@ -238,8 +259,9 @@ function antiBajonaScore(dest) {
 
 // La duración y la tolerancia a desplazamiento mandan la distancia razonable.
 function distanceBoundsForTrip(prefs) {
-  const trip = ["weekend", "short", "medium", "long"].includes(prefs.tripLength) ? prefs.tripLength : null;
-  const nights = trip ? (TRIP_NIGHTS[trip] ?? 4) : clamp(parseInt(prefs.nights, 10) || 2, 1, 21);
+  const tripLength = ["weekend", "short", "medium", "long"].includes(prefs.tripLength) ? prefs.tripLength : "short";
+  const tripRange = tripNightsRange(tripLength);
+  const nights = clamp(parseInt(prefs.nights, 10) || tripRange.default, tripRange.min, tripRange.max);
   let min = 0;
   let max = 340;
   let label = "media distancia";
@@ -545,9 +567,10 @@ Viajero:
 - Intereses por prioridad (máx. 3, el 1º pesa más): ${vibesOrdered}
 - Clima: ${prefs.climate || "any"} · Ritmo: ${prefs.pace || "balanced"}
 - Perfil: ${profileLabel(prefs.profile)}${agesLabel(prefs) ? ` · ${agesLabel(prefs)}` : ""}
-- Presupuesto: ${BUDGET_LABELS[prefs.budgetTier] || "medio"} · Duración: ${TRIP_LABELS[prefs.tripLength] || prefs.nights + " noches"}
+- Presupuesto: ${BUDGET_LABELS[prefs.budgetTier] || "medio"} · Duración: ${TRIP_LABELS[prefs.tripLength] || prefs.nights + " noches"} (${prefs.days || prefs.nights + 1} días)
 - Distancia aceptable: ${RANGE_LABELS[prefs.travelRange] || "media distancia"}
 - Estilo explorador: ${EXPLORER_LABELS[explorer] || "mezcla equilibrada"}
+- Alojamiento preferido: ${ACCOM_LABELS[prefs.accommodation] || "indiferente"} · Comodidad: ${COMFORT_LABELS[prefs.comfortLevel] || "equilibrada"}
 - Noches: ${prefs.nights} · Viajeros: ${prefs.travelers}
 - Distancia adecuada para esta duración: ${distance.label}; baseFlight entre ${distance.min} y ${distance.max} € aprox.
 
@@ -608,11 +631,17 @@ async function aiMatchReasons(picks, prefs) {
   const vibesOrdered = (prefs.vibes || []).length
     ? (prefs.vibes || []).map((v, i) => `${i + 1}º ${v}`).join(", ")
     : "sin preferencias marcadas";
+  const foodNote = (prefs.foodInterests || []).length
+    ? ` · Gastronomía: ${prefs.foodInterests.map((f) => FOOD_LABELS[f] || f).join(", ")}`
+    : "";
+  const dietNote = prefs.dietary && prefs.dietary !== "none"
+    ? ` · Dieta: ${DIET_LABELS[prefs.dietary]}`
+    : "";
   const user = `Preferencias del viajero (intereses por ORDEN de prioridad, el 1º es el que más importa):
 - Intereses: ${vibesOrdered}
 - Clima: ${prefs.climate || "any"} · Ritmo: ${prefs.pace || "balanced"}
 - Presupuesto: ${BUDGET_LABELS[prefs.budgetTier] || "medio"} · Estilo: ${EXPLORER_LABELS[prefs.explorerStyle] || "equilibrado"}
-- Perfil: ${profileLabel(prefs.profile)}${agesLabel(prefs) ? ` · ${agesLabel(prefs)}` : ""}
+- Perfil: ${profileLabel(prefs.profile)}${agesLabel(prefs) ? ` · ${agesLabel(prefs)}` : ""}${foodNote}${dietNote}
 
 Destinos ya seleccionados:
 ${JSON.stringify(list)}
@@ -762,18 +791,34 @@ function priceActivityPack(pack, baseTier) {
 function fallbackActivityPacks(destinations, prefs) {
   const tags = new Set(destinations.flatMap((d) => d.tags || []));
   const family = prefs.profile === "familia" || (prefs.ages || []).some((a) => Number.isFinite(a) && a < 13);
-  const foodie = tags.has("food") || (prefs.vibes || []).includes("food");
+  const foods = new Set(prefs.foodInterests || []);
+  const foodie = tags.has("food") || (prefs.vibes || []).includes("food") || foods.size > 0;
   const nature = tags.has("nature") || (prefs.vibes || []).includes("nature");
   const beach = tags.has("beach") || (prefs.vibes || []).includes("beach");
   const culture = tags.has("culture") || (prefs.vibes || []).includes("culture");
   const lively = tags.has("nightlife") && !family;
+  const diet = prefs.dietary && prefs.dietary !== "none" ? DIET_LABELS[prefs.dietary] : null;
+
+  const foodEssence = foods.has("street") ? "Ruta de street food local"
+    : foods.has("fine") ? "Degustación en restaurante con estrella"
+    : foods.has("wine") ? "Visita a bodega o viñedo"
+    : foods.has("markets") ? "Tour por mercado gastronómico"
+    : foods.has("cooking") ? "Taller de cocina con anfitrión"
+    : foods.has("beer") ? "Ruta de cervezas artesanales"
+    : foodie ? "Ruta de sabores locales" : culture ? "Paseo cultural guiado" : "Tour de bienvenida con guía local";
+  const foodImmersion = foods.has("fine") ? "Experiencia gastronómica premium con chef"
+    : foods.has("cooking") ? "Clase de cocina privada con chef local"
+    : foods.has("wine") ? "Cata privada en bodega de la región"
+    : foodie ? "Experiencia gastronómica con chef o mercado" : "Experiencia privada con anfitrión local";
+  const dietNote = diet ? ` (${diet})` : "";
+
   const essenceItems = [
-    `${foodie ? "Ruta de sabores locales" : culture ? "Paseo cultural guiado" : "Tour de bienvenida con guía local"} adaptado al destino · ≈${family ? 58 : 68} €`,
+    `${foodEssence}${dietNote} adaptado al destino · ≈${family ? 58 : 68} €`,
     `${beach ? "Plan al atardecer junto al mar" : nature ? "Mirador o ruta suave de naturaleza" : "Cata o taller local de temporada"} · ≈${family ? 42 : 55} €`,
     "Reserva prioritaria + mapa personalizado de rincones secretos · ≈25 €",
   ];
   const immersionItems = [
-    `${foodie ? "Experiencia gastronómica con chef o mercado" : "Experiencia privada con anfitrión local"} · ≈${family ? 95 : 115} €`,
+    `${foodImmersion}${dietNote} · ≈${family ? 95 : 115} €`,
     `${culture ? "Guía privado de medio día" : nature ? "Actividad outdoor guiada" : "Ruta curada por barrios con carácter"} · ≈${family ? 105 : 130} €`,
     `${beach ? "Actividad de costa o barco compartido" : nature ? "E-bike, kayak o senderismo guiado" : lively ? "Plan nocturno seguro con entrada incluida" : "Taller artesanal o creativo local"} · ≈${family ? 62 : 76} €`,
     "Asistente de viaje por chat 24/7 · ≈20 €",
@@ -890,6 +935,24 @@ app.post("/api/quote", async (req, res) => {
   } catch (err) {
     console.error("/api/quote failed", err);
     res.status(500).json({ ok: false, error: "No se pudo generar la cotización" });
+  }
+});
+
+// Recalcula packs de experiencia cuando el viajero ajusta gastronomía, dieta,
+// alojamiento o comodidad tras ver los destinos posibles.
+app.post("/api/refine-tiers", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const prefs = normalizePrefs(body.prefs || {});
+    const destinations = Array.isArray(body.destinations) ? body.destinations.slice(0, 12) : [];
+    if (!destinations.length) {
+      return res.status(400).json({ ok: false, error: "Faltan destinos" });
+    }
+    const tiers = await aiActivityPacks(destinations, prefs);
+    res.json({ ok: true, tiers, prefs });
+  } catch (err) {
+    console.error("/api/refine-tiers failed", err);
+    res.status(500).json({ ok: false, error: "No se pudieron actualizar las experiencias" });
   }
 });
 
@@ -1445,17 +1508,17 @@ function normalizePrefs(p) {
     : (Number.isFinite(+p.age) && +p.age > 0 ? clamp(parseInt(p.age, 10), 1, 99) : null);
 
   const tripLength = ["weekend", "short", "medium", "long"].includes(p.tripLength) ? p.tripLength : "short";
-  const nightsFromTrip = TRIP_NIGHTS[tripLength] ?? 4;
-  const nights = clamp(parseInt(p.nights, 10) || nightsFromTrip, 1, 21);
+  const tripRange = tripNightsRange(tripLength);
+  const nights = clamp(parseInt(p.nights, 10) || tripRange.default, tripRange.min, tripRange.max);
+  const days = nights + 1;
 
   const budgetTier = ["budget", "mid", "premium", "luxury"].includes(p.budgetTier) ? p.budgetTier : "mid";
   const explorerStyle = ["highlights", "hidden", "balanced"].includes(p.explorerStyle) ? p.explorerStyle : "balanced";
   const hiddenGems = explorerStyle !== "highlights" && p.hiddenGems !== false;
 
-  let stayTier = allowedStay.includes(p.stayTier) ? p.stayTier : (BUDGET_TO_STAY[budgetTier] || "boutique");
+  const accommodation = ["hotel", "boutique", "resort", "apartment", "rural", "any"].includes(p.accommodation) ? p.accommodation : "any";
   const comfort = ["comfort", "balanced", "authentic"].includes(p.comfortLevel) ? p.comfortLevel : "balanced";
-  if (comfort === "comfort") stayTier = "villa";
-  else if (comfort === "authentic") stayTier = "comodo";
+  const stayTier = resolveStayTier({ budgetTier, accommodation, comfortLevel: comfort, stayTier: p.stayTier });
 
   const foodInterests = Array.isArray(p.foodInterests)
     ? [...new Set(p.foodInterests.filter((f) => allowedFood.includes(f)))].slice(0, 7)
@@ -1477,6 +1540,7 @@ function normalizePrefs(p) {
     stayTier,
     travelers,
     tripLength,
+    days,
     nights,
     budgetTier,
     budget,
@@ -1485,7 +1549,7 @@ function normalizePrefs(p) {
     hiddenGems,
     foodInterests,
     dietary: ["none", "vegetarian", "vegan", "glutenfree", "halal", "kosher"].includes(p.dietary) ? p.dietary : "none",
-    accommodation: ["hotel", "boutique", "resort", "apartment", "rural", "any"].includes(p.accommodation) ? p.accommodation : "any",
+    accommodation,
     comfortLevel: comfort,
     discarded: Array.isArray(p.discarded) ? p.discarded.slice(0, 30) : [],
   };
