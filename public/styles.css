@@ -395,6 +395,40 @@ em {
 .vibes-order { margin-top: 1rem; font-size: 0.9rem; color: var(--ink-soft); }
 .vibes-order b { color: var(--ink); font-weight: 700; }
 
+/* Slots de prioridad de intereses */
+.priority-slots { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+.priority-slot {
+  font-size: 0.82rem; font-weight: 600; padding: 0.4rem 0.75rem;
+  border: 1px dashed var(--line); border-radius: 100px; color: var(--ink-soft);
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+.priority-slot.is-filled { border-style: solid; border-color: var(--coral); background: rgba(255,107,74,0.08); color: var(--ink); }
+
+/* Chips multi-selección (gastronomía) */
+.chips-multi .chip.is-selected { background: var(--teal, var(--coral)); border-color: var(--teal, var(--coral)); }
+
+/* Sección opcional colapsable */
+.quiz-optional { margin-top: 1.4rem; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0.8rem 1rem; background: var(--field-bg); }
+.quiz-optional summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; color: var(--ink-soft); }
+.quiz-optional[open] summary { margin-bottom: 0.8rem; color: var(--ink); }
+
+/* Error de validación del quiz */
+.quiz-error { color: #ff8a73; font-size: 0.9rem; margin-top: 1rem; font-weight: 600; }
+
+/* Hint clima estacional */
+.climate-seasonal-hint {
+  margin-top: 0.8rem; font-size: 0.88rem; color: var(--ink-soft);
+  border-left: 3px solid var(--teal, var(--coral)); padding: 0.55rem 0.9rem;
+  background: var(--field-bg); border-radius: var(--radius-sm);
+}
+
+/* Panel de refinamiento post-destino */
+.refine-panel { margin-bottom: 2rem; padding: clamp(1.2rem, 3vw, 1.8rem); }
+.refine-panel .field-label small { font-weight: 400; color: var(--ink-soft); }
+.refine-tiers-title { margin-top: 0.5rem; }
+.choice-row-budget .choice { min-width: 130px; }
+.choice-row-diet .choice { min-width: 140px; flex: 0 1 auto; }
+
 /* Explicación del ritmo de viaje (se rellena según la opción elegida) */
 .pace-explain {
   margin-top: 0.8rem; font-size: 0.88rem; color: var(--ink-soft);

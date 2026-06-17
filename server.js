@@ -97,6 +97,19 @@ const PROFILE_LABELS = {
 };
 const profileLabel = (p) => PROFILE_LABELS[p] || "sin especificar";
 
+const BUDGET_LABELS = { budget: "económico", mid: "medio", premium: "premium", luxury: "lujo" };
+const TRIP_LABELS = { weekend: "escapada 2–3 días", short: "4–7 días", medium: "1–2 semanas", long: "2+ semanas" };
+const RANGE_LABELS = { short: "vuelo corto", medium: "media distancia", long: "largo recorrido", anywhere: "cualquier sitio" };
+const EXPLORER_LABELS = { highlights: "lugares icónicos", hidden: "joyas escondidas", balanced: "mezcla equilibrada" };
+const COMFORT_LABELS = { comfort: "comodidad ante todo", balanced: "equilibrado", authentic: "experiencias auténticas" };
+const ACCOM_LABELS = { hotel: "hotel", boutique: "boutique", resort: "resort", apartment: "apartamento", rural: "rural", any: "indiferente" };
+const FOOD_LABELS = { local: "cocina local", street: "street food", fine: "alta cocina", wine: "vino y viñedos", beer: "cerveza artesanal", markets: "mercados", cooking: "experiencias culinarias" };
+const DIET_LABELS = { none: "sin restricciones", vegetarian: "vegetariano", vegan: "vegano", glutenfree: "sin gluten", halal: "halal", kosher: "kosher" };
+
+const BUDGET_TO_STAY = { budget: "comodo", mid: "boutique", premium: "boutique", luxury: "villa" };
+const TRIP_NIGHTS = { weekend: 1, short: 4, medium: 10, long: 14 };
+const BUDGET_ESTIMATE = { budget: 350, mid: 550, premium: 850, luxury: 1400 };
+
 // Texto legible de las edades del grupo para los prompts de IA. Prefiere la
 // lista de edades por viajero; si no hay, cae a la media.
 const agesLabel = (prefs) => {
@@ -223,16 +236,34 @@ function antiBajonaScore(dest) {
   return distance * 0.7 + appeal * 0.9 + novelty * 0.8;
 }
 
-// La duración manda la distancia razonable: escapadas cortas no deben perderse
-// en vuelos largos, y 7 días sí justifican algo más lejano sin irse a long haul.
+// La duración y la tolerancia a desplazamiento mandan la distancia razonable.
 function distanceBoundsForTrip(prefs) {
-  const nights = clamp(parseInt(prefs.nights, 10) || 2, 1, 6);
-  if (nights <= 1) return { min: 0, max: 135, label: "vuelos cortos" };
-  if (nights === 2) return { min: 0, max: 165, label: "vuelos cortos o medios" };
-  if (nights === 3) return { min: 85, max: 205, label: "media distancia" };
-  if (nights === 4) return { min: 100, max: 245, label: "media distancia amplia" };
-  if (nights === 5) return { min: 125, max: 290, label: "destinos más especiales" };
-  return { min: 160, max: 340, label: "destinos más lejanos sin long haul" };
+  const trip = ["weekend", "short", "medium", "long"].includes(prefs.tripLength) ? prefs.tripLength : null;
+  const nights = trip ? (TRIP_NIGHTS[trip] ?? 4) : clamp(parseInt(prefs.nights, 10) || 2, 1, 21);
+  let min = 0;
+  let max = 340;
+  let label = "media distancia";
+  if (nights <= 1) { min = 0; max = 135; label = "vuelos cortos"; }
+  else if (nights <= 3) { min = 0; max = 165; label = "vuelos cortos o medios"; }
+  else if (nights <= 5) { min = 85; max = 205; label = "media distancia"; }
+  else if (nights <= 7) { min = 100; max = 245; label = "media distancia amplia"; }
+  else if (nights <= 10) { min = 125; max = 290; label = "destinos más especiales"; }
+  else if (nights <= 14) { min = 160; max = 380; label = "destinos lejanos"; }
+  else { min = 200; max = 500; label = "destinos muy lejanos"; }
+
+  const range = prefs.travelRange || "medium";
+  const rangeBounds = {
+    short: { min: 0, max: 165, label: "vuelo corto" },
+    medium: { min: 85, max: 290, label: "media distancia" },
+    long: { min: 160, max: 450, label: "largo recorrido" },
+    anywhere: { min: 0, max: 999, label: "cualquier distancia" },
+  };
+  const rb = rangeBounds[range] || rangeBounds.medium;
+  return {
+    min: Math.max(min, rb.min),
+    max: Math.min(max, rb.max),
+    label: rb.label !== "cualquier distancia" ? `${label}, ${rb.label}` : label,
+  };
 }
 
 function matchesTripDistance(dest, prefs, relax = 1) {
@@ -311,14 +342,32 @@ function scoreDestination(dest, prefs) {
   });
   // clima
   if (prefs.climate && prefs.climate !== "any") {
-    if (dest.climate === prefs.climate) score += 2;
+    if (prefs.climate === "seasonal") {
+      if (dest.season === "alpine" || dest.tags.includes("nature")) score += 2;
+      if (dest.climate === "cool") score += 1;
+    } else if (dest.climate === prefs.climate) score += 2;
     else if (prefs.climate === "warm" && dest.climate === "temperate") score += 1;
   }
   // ritmo
   if (prefs.pace === "relax" && (dest.tags.includes("nature") || dest.tags.includes("romantic"))) score += 1;
   if (prefs.pace === "adventure" && (dest.tags.includes("culture") || dest.tags.includes("nightlife"))) score += 1;
-  // joyas escondidas
-  if (dest.isHiddenGem) score += prefs.hiddenGems ? 2.5 : -100;
+  // estilo explorador
+  const explorer = prefs.explorerStyle || (prefs.hiddenGems ? "balanced" : "highlights");
+  if (dest.isHiddenGem) {
+    if (explorer === "hidden") score += 3;
+    else if (explorer === "balanced") score += 1.5;
+    else score -= 100;
+  } else if (explorer === "highlights") {
+    score += (dest.appeal ?? 3) >= 4 ? 1.5 : 0.5;
+  }
+  // presupuesto (tier)
+  const tier = prefs.budgetTier || "mid";
+  const refPrice = dest.baseFlight + dest.baseHotelNight * (prefs.nights || 4);
+  if (tier === "budget" && refPrice > 280) score -= 1.5;
+  if (tier === "luxury" && refPrice < 200) score -= 0.8;
+  if (tier === "premium" || tier === "luxury") {
+    if ((dest.appeal ?? 3) >= 4) score += 0.8;
+  }
   // anti-bajona (distancia + atractivo + desconocimiento) y demografía
   score += antiBajonaScore(dest);
   score += demographicAdjust(dest, prefs);
@@ -355,6 +404,9 @@ function matchesTopVibes(dest, vibes) {
 // (templado sirve para quien pide cálido o fresco) para no excluir de más.
 function matchesClimate(dest, climate) {
   if (!climate || climate === "any") return true;
+  if (climate === "seasonal") {
+    return dest.season === "alpine" || dest.climate === "cool" || dest.tags.includes("nature");
+  }
   if (dest.climate === climate) return true;
   if (dest.climate === "temperate" && (climate === "warm" || climate === "cool")) return true;
   return false;
@@ -370,10 +422,12 @@ function selectDestinations(prefs, sourcePool = CATALOG, n = PRICING.destination
   const vibes = prefs.vibes || [];
   const topVibes = vibes.slice(0, 2).filter(Boolean);
 
+  const explorer = prefs.explorerStyle || (prefs.hiddenGems !== false ? "balanced" : "highlights");
+  const allowGems = explorer !== "highlights";
   const basePool = sourcePool
     .filter((d) => !discarded.has(d.id))
     .filter((d) => (origin ? d.country !== origin : true))
-    .filter((d) => (prefs.hiddenGems ? true : !d.isHiddenGem));
+    .filter((d) => (allowGems ? true : !d.isHiddenGem));
   let pool = basePool.filter((d) => matchesTripDistance(d, prefs));
   if (pool.length < Math.min(PRICING.destinationsMin || n, basePool.length)) {
     pool = basePool.filter((d) => matchesTripDistance(d, prefs, 1.18));
@@ -479,30 +533,33 @@ async function aiDestinations(prefs, n = 14) {
   const vibesOrdered = (prefs.vibes || []).length
     ? (prefs.vibes || []).map((v, i) => `${i + 1}º ${v}`).join(", ")
     : "sin preferencias marcadas";
+  const explorer = prefs.explorerStyle || (prefs.hiddenGems !== false ? "balanced" : "highlights");
   const system =
     "Eres un planificador de viajes experto y creativo. Propones destinos de " +
     "CUALQUIER parte del mundo (sin limitarte a ninguna lista cerrada) para " +
-    "escapadas cortas en avión. Respondes SIEMPRE en JSON válido y en español.";
+    "escapadas en avión. Respondes SIEMPRE en JSON válido y en español.";
   const user = `Propón ${n} destinos para un viaje sorpresa, ORDENADOS del que más encaja al que menos.
 
 Viajero:
 - Sale de: ${origin} (país: ${originCountry})
-- Intereses por prioridad (el 1º pesa más): ${vibesOrdered}
+- Intereses por prioridad (máx. 3, el 1º pesa más): ${vibesOrdered}
 - Clima: ${prefs.climate || "any"} · Ritmo: ${prefs.pace || "balanced"}
 - Perfil: ${profileLabel(prefs.profile)}${agesLabel(prefs) ? ` · ${agesLabel(prefs)}` : ""}
-- Nivel de alojamiento: ${prefs.stayTier || "boutique"}
+- Presupuesto: ${BUDGET_LABELS[prefs.budgetTier] || "medio"} · Duración: ${TRIP_LABELS[prefs.tripLength] || prefs.nights + " noches"}
+- Distancia aceptable: ${RANGE_LABELS[prefs.travelRange] || "media distancia"}
+- Estilo explorador: ${EXPLORER_LABELS[explorer] || "mezcla equilibrada"}
 - Noches: ${prefs.nights} · Viajeros: ${prefs.travelers}
-- ¿Acepta joyas escondidas (volar + 1-2 h en coche/tren/ferry hasta el sitio)?: ${prefs.hiddenGems ? "sí" : "no"}
 - Distancia adecuada para esta duración: ${distance.label}; baseFlight entre ${distance.min} y ${distance.max} € aprox.
 
 Reglas IMPORTANTES (filosofía "que no dé bajona"):
 - NO repitas el país de origen (${originCountry}).
 - Prioriza destinos que MEREZCAN el viaje por tres ejes: (1) DISTANCIA: que se sienta una escapada de verdad, no algo a un paso; (2) ATRACTIVO: factor "wow"; (3) DESCONOCIMIENTO: poco trillado/sorprendente para alguien de ${originCountry}. Ejemplo: para alguien de Madrid, Oporto resulta cercano y muy trillado: penalízalo frente a destinos más lejanos y diferentes.
-- Respeta la distancia adecuada a la duración: viajes de 2-3 días, vuelos cortos/medios; viajes de 7 días, destinos más lejanos pero sin long haul ni rutas agotadoras.
+- Respeta la distancia adecuada a la duración y la tolerancia del viajero.
 - Respeta clima e intereses y adapta al perfil/edad (familia: evita fiesta, favorece naturaleza/playa; pareja: romántico; amigos: animado; sénior: cultura/naturaleza).
 - Cada destino debe incluir en "tags" las DOS primeras prioridades de interés (ambas obligatorias en cada destino).
-- ${prefs.hiddenGems ? "Puedes incluir joyas escondidas (isHiddenGem=true y describe el traslado en 'transfer')." : "NO incluyas joyas escondidas: todas isHiddenGem=false y sin traslados largos."}
-- Mezcla precios pero sin opciones desproporcionadamente baratas respecto al resto.
+- ${explorer === "hidden" ? "Prioriza joyas escondidas (isHiddenGem=true y describe el traslado en 'transfer')." : explorer === "highlights" ? "NO incluyas joyas escondidas: destinos icónicos y accesibles, todas isHiddenGem=false." : "Puedes mezclar destinos icónicos y joyas escondidas (isHiddenGem=true con traslado descrito)."}
+- ${prefs.climate === "seasonal" ? "Prioriza destinos con experiencias estacionales marcadas (nieve, otoño, auroras, etc.)." : ""}
+- ${prefs.budgetTier === "budget" ? "Prioriza destinos económicos." : prefs.budgetTier === "luxury" ? "Prioriza destinos premium y exclusivos." : "Mezcla precios pero sin opciones desproporcionadamente baratas respecto al resto."}
 
 Para CADA destino devuelve EXACTAMENTE estos campos:
 - id: slug en minúsculas con guiones
@@ -553,7 +610,8 @@ async function aiMatchReasons(picks, prefs) {
     : "sin preferencias marcadas";
   const user = `Preferencias del viajero (intereses por ORDEN de prioridad, el 1º es el que más importa):
 - Intereses: ${vibesOrdered}
-- Clima: ${prefs.climate || "any"} · Ritmo: ${prefs.pace || "balanced"} · Nivel: ${prefs.stayTier || "boutique"}
+- Clima: ${prefs.climate || "any"} · Ritmo: ${prefs.pace || "balanced"}
+- Presupuesto: ${BUDGET_LABELS[prefs.budgetTier] || "medio"} · Estilo: ${EXPLORER_LABELS[prefs.explorerStyle] || "equilibrado"}
 - Perfil: ${profileLabel(prefs.profile)}${agesLabel(prefs) ? ` · ${agesLabel(prefs)}` : ""}
 
 Destinos ya seleccionados:
@@ -736,13 +794,20 @@ async function aiActivityPacks(destinations, prefs) {
     "Eres diseñador de experiencias para una agencia de viajes sorpresa premium. " +
     "Creas packs de actividades que funcionan para cualquiera de los destinos posibles, " +
     "adaptados al perfil del grupo. Respondes SIEMPRE en JSON válido y en español.";
+  const foodNote = (prefs.foodInterests || []).length
+    ? ` · Gastronomía: ${prefs.foodInterests.map((f) => FOOD_LABELS[f] || f).join(", ")}`
+    : "";
+  const dietNote = prefs.dietary && prefs.dietary !== "none"
+    ? ` · Dieta: ${DIET_LABELS[prefs.dietary] || prefs.dietary}`
+    : "";
   const user = `Crea 2 packs de actividades para este viaje sorpresa.
 
 Viajero:
 - Perfil: ${profileLabel(prefs.profile)}${agesLabel(prefs) ? ` · ${agesLabel(prefs)}` : ""}
 - Viajeros: ${prefs.travelers} · Noches: ${prefs.nights}
 - Intereses por prioridad: ${(prefs.vibes || []).join(", ") || "sin marcar"}
-- Ritmo: ${prefs.pace || "balanced"} · Clima: ${prefs.climate || "any"}
+- Ritmo: ${prefs.pace || "balanced"} · Clima: ${prefs.climate || "any"}${foodNote}${dietNote}
+- Comodidad: ${COMFORT_LABELS[prefs.comfortLevel] || "equilibrada"} · Alojamiento: ${ACCOM_LABELS[prefs.accommodation] || "indiferente"}
 
 Destinos posibles:
 ${JSON.stringify(list)}
@@ -954,14 +1019,16 @@ function estimatePrefsCompleteness(prefs) {
   let score = 0;
   if (prefs.departureCity) score += 1;
   if (prefs.travelers) score += 1;
-  if (prefs.nights) score += 1;
+  if (prefs.tripLength || prefs.nights) score += 1;
   if (prefs.profile) score += 1;
-  if ((prefs.ages || []).some((a) => Number.isFinite(a))) score += 1;
+  if ((prefs.ages || []).some((a) => Number.isFinite(a))) score += 0.5;
   if ((prefs.vibes || []).length) score += 1;
-  if (prefs.stayTier) score += 1;
-  if (prefs.climate && prefs.climate !== "any") score += 1;
-  if (prefs.pace) score += 1;
-  return Math.min(1, score / 9);
+  if (prefs.budgetTier) score += 1;
+  if (prefs.climate && prefs.climate !== "any") score += 0.5;
+  if (prefs.pace) score += 0.5;
+  if (prefs.explorerStyle) score += 0.5;
+  if (prefs.travelRange) score += 0.5;
+  return Math.min(1, score / 8);
 }
 
 async function aiEstimateCopy(prefs, range, step) {
@@ -1362,15 +1429,11 @@ app.post("/api/price", async (req, res) => {
 function normalizePrefs(p) {
   const allowedVibes = ["beach", "culture", "nature", "food", "nightlife", "romantic"];
   const allowedStay = STAY_TIERS.map((t) => t.id);
-  // vibes llegan YA en orden de prioridad (el 1º es el más importante);
-  // conservamos ese orden y solo deduplicamos.
+  const allowedFood = ["local", "street", "fine", "wine", "beer", "markets", "cooking"];
   const vibes = Array.isArray(p.vibes)
-    ? [...new Set(p.vibes.filter((v) => allowedVibes.includes(v)))].slice(0, 6)
+    ? [...new Set(p.vibes.filter((v) => allowedVibes.includes(v)))].slice(0, 3)
     : [];
   const travelers = clamp(parseInt(p.travelers, 10) || 2, 1, 8);
-  // Edad de CADA viajero (una por viajero). Truncamos al número de viajeros y
-  // dejamos null las que no se hayan rellenado. La media (age) se deriva de las
-  // edades válidas, para mantener compatibilidad con el resto del flujo.
   const rawAges = Array.isArray(p.ages) ? p.ages : [];
   const ages = Array.from({ length: travelers }, (_, i) => {
     const n = parseInt(rawAges[i], 10);
@@ -1380,21 +1443,50 @@ function normalizePrefs(p) {
   const avgAge = validAges.length
     ? Math.round(validAges.reduce((a, b) => a + b, 0) / validAges.length)
     : (Number.isFinite(+p.age) && +p.age > 0 ? clamp(parseInt(p.age, 10), 1, 99) : null);
+
+  const tripLength = ["weekend", "short", "medium", "long"].includes(p.tripLength) ? p.tripLength : "short";
+  const nightsFromTrip = TRIP_NIGHTS[tripLength] ?? 4;
+  const nights = clamp(parseInt(p.nights, 10) || nightsFromTrip, 1, 21);
+
+  const budgetTier = ["budget", "mid", "premium", "luxury"].includes(p.budgetTier) ? p.budgetTier : "mid";
+  const explorerStyle = ["highlights", "hidden", "balanced"].includes(p.explorerStyle) ? p.explorerStyle : "balanced";
+  const hiddenGems = explorerStyle !== "highlights" && p.hiddenGems !== false;
+
+  let stayTier = allowedStay.includes(p.stayTier) ? p.stayTier : (BUDGET_TO_STAY[budgetTier] || "boutique");
+  const comfort = ["comfort", "balanced", "authentic"].includes(p.comfortLevel) ? p.comfortLevel : "balanced";
+  if (comfort === "comfort") stayTier = "villa";
+  else if (comfort === "authentic") stayTier = "comodo";
+
+  const foodInterests = Array.isArray(p.foodInterests)
+    ? [...new Set(p.foodInterests.filter((f) => allowedFood.includes(f)))].slice(0, 7)
+    : [];
+
+  const budgetEstimate = BUDGET_ESTIMATE[budgetTier] ?? 550;
+  const budget = Number.isFinite(+p.budget) && +p.budget > 0
+    ? clamp(+p.budget, 50, 20000)
+    : budgetEstimate;
+
   return {
     departureCity: typeof p.departureCity === "string" ? p.departureCity.slice(0, 60) : "Madrid",
     vibes,
-    climate: ["warm", "temperate", "cool", "any"].includes(p.climate) ? p.climate : "any",
+    climate: ["warm", "temperate", "cool", "seasonal", "any"].includes(p.climate) ? p.climate : "any",
     pace: ["relax", "balanced", "adventure"].includes(p.pace) ? p.pace : "balanced",
-    // Perfil del viajero: con quién viaja. Ajusta destinos y actividades.
     profile: ["solo", "pareja", "amigos", "familia"].includes(p.profile) ? p.profile : null,
-    // Edad de cada viajero + media derivada (orientativa).
     ages,
     age: avgAge,
-    stayTier: allowedStay.includes(p.stayTier) ? p.stayTier : "boutique",
+    stayTier,
     travelers,
-    nights: clamp(parseInt(p.nights, 10) || 2, 1, 6),
-    budget: Number.isFinite(+p.budget) && +p.budget > 0 ? clamp(+p.budget, 50, 20000) : null,
-    hiddenGems: p.hiddenGems !== false,
+    tripLength,
+    nights,
+    budgetTier,
+    budget,
+    travelRange: ["short", "medium", "long", "anywhere"].includes(p.travelRange) ? p.travelRange : "medium",
+    explorerStyle,
+    hiddenGems,
+    foodInterests,
+    dietary: ["none", "vegetarian", "vegan", "glutenfree", "halal", "kosher"].includes(p.dietary) ? p.dietary : "none",
+    accommodation: ["hotel", "boutique", "resort", "apartment", "rural", "any"].includes(p.accommodation) ? p.accommodation : "any",
+    comfortLevel: comfort,
     discarded: Array.isArray(p.discarded) ? p.discarded.slice(0, 30) : [],
   };
 }

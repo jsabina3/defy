@@ -28,7 +28,7 @@
     <div class="app-header-inner reveal">
       <p class="eyebrow">Configurador</p>
       <h1 class="section-title">Diseña tu viaje sorpresa</h1>
-      <p class="section-sub">Recogemos tus preferencias y te mostramos destinos posibles con un calendario de precios calculados para cada fecha de salida.</p>
+      <p class="section-sub">7 preguntas clave para recomendarte destinos sorprendentes. Después afinamos gastronomía, alojamiento y más.</p>
     </div>
   </section>
 
@@ -38,10 +38,10 @@
     <div class="quiz card" id="quiz">
       <div class="quiz-progress"><span id="quizBar"></span></div>
 
-      <!-- Paso 1 -->
+      <!-- Paso 1 · Logística mínima + compañía -->
       <div class="quiz-step is-active" data-step="0">
-        <p class="quiz-kicker">Paso 1 de 4</p>
-        <h3 class="quiz-q">¿Desde dónde y con quién?</h3>
+        <p class="quiz-kicker">Paso 1 de 5</p>
+        <h3 class="quiz-q">Lo básico para empezar</h3>
         <div class="field-row">
           <label class="field">
             <span>Ciudad de salida</span>
@@ -62,7 +62,7 @@
         </div>
 
         <span class="field-label">¿Con quién viajas?</span>
-        <p class="quiz-hint">Adaptamos destinos y experiencias a tu tipo de grupo.</p>
+        <p class="quiz-hint">Cambia radicalmente las recomendaciones según tu grupo.</p>
         <div class="choice-row" id="profileChoice">
           <button type="button" class="choice" data-profile="solo">🧍 Solo/a</button>
           <button type="button" class="choice" data-profile="pareja">💞 En pareja</button>
@@ -70,28 +70,23 @@
           <button type="button" class="choice" data-profile="familia">👨‍👩‍👧 Familia</button>
         </div>
 
-        <div class="field ages-field">
-          <span class="field-label" style="margin-top:0">Edad de cada viajero</span>
-          <p class="quiz-hint">Afinamos destinos y experiencias para cada persona del grupo.</p>
+        <details class="quiz-optional">
+          <summary>Edades del grupo (opcional)</summary>
+          <p class="quiz-hint">Nos ayuda a afinar destinos y experiencias para cada persona.</p>
           <div class="ages-grid" id="agesGrid"></div>
-        </div>
-
-        <span class="field-label">Duración (escapada corta)</span>
-        <div class="choice-row" id="nightsChoice">
-          <button type="button" class="choice" data-nights="1">2 días<small>1 noche</small></button>
-          <button type="button" class="choice is-selected" data-nights="2">3 días<small>2 noches</small></button>
-          <button type="button" class="choice" data-nights="3">4 días<small>3 noches</small></button>
-          <button type="button" class="choice" data-nights="4">5 días<small>4 noches</small></button>
-          <button type="button" class="choice" data-nights="5">6 días<small>5 noches</small></button>
-          <button type="button" class="choice" data-nights="6">7 días<small>6 noches</small></button>
-        </div>
+        </details>
       </div>
 
-      <!-- Paso 2 -->
+      <!-- Paso 2 · Intereses principales (máx. 3, ordenados) -->
       <div class="quiz-step" data-step="1">
-        <p class="quiz-kicker">Paso 2 de 4</p>
-        <h3 class="quiz-q">¿Qué te apetece vivir?</h3>
-        <p class="quiz-hint">Tócalos <b>por orden de prioridad</b>: el primero que elijas es el que más pesa al escoger tus destinos.</p>
+        <p class="quiz-kicker">Paso 2 de 5</p>
+        <h3 class="quiz-q">Tus intereses principales</h3>
+        <p class="quiz-hint">Elige hasta <b>3 intereses</b> y tócalos <b>por orden de prioridad</b>. No es lo mismo 70&nbsp;% cultura + 30&nbsp;% gastronomía que 70&nbsp;% playa + 30&nbsp;% cultura.</p>
+        <div class="priority-slots" id="prioritySlots">
+          <span class="priority-slot" data-slot="0">1.º Principal</span>
+          <span class="priority-slot" data-slot="1">2.º Segundo</span>
+          <span class="priority-slot" data-slot="2">3.º Tercero</span>
+        </div>
         <div class="chips chips-priority" id="vibes">
           <button type="button" class="chip" data-vibe="beach"><span class="chip-rank"></span>🏖️ Costa &amp; playa</button>
           <button type="button" class="chip" data-vibe="culture"><span class="chip-rank"></span>🏛️ Ciudad &amp; cultura</button>
@@ -103,67 +98,76 @@
         <p class="vibes-order" id="vibesOrder" hidden></p>
       </div>
 
-      <!-- Paso 3 · Nivel de viaje (destino + alojamiento) -->
+      <!-- Paso 3 · Clima -->
       <div class="quiz-step" data-step="2">
-        <p class="quiz-kicker">Paso 3 de 4</p>
-        <h3 class="quiz-q">¿Qué nivel de viaje buscas?</h3>
-        <p class="quiz-hint">Define el tipo de destino y, sobre todo, de alojamiento. No es lo mismo un hostal con encanto en Marsella que una villa sobre el Lago de Como.</p>
-        <div class="stay-tiers" id="stayTiers">
-          <button type="button" class="stay-tier" data-stay="comodo">
-            <span class="stay-stars">★★★</span>
-            <span class="stay-name">Cómodo</span>
-            <span class="stay-price"><b>€</b> desde ≈138 €/noche·hab.</span>
-            <span class="stay-desc">Aparthotel, casa de huéspedes u hostal boutique, céntrico y con buen rollo.</span>
-            <span class="stay-eg">Ej.: hostal con encanto en Marsella · aparthotel en Oporto</span>
-          </button>
-          <button type="button" class="stay-tier is-selected" data-stay="boutique">
-            <span class="stay-badge">Recomendado</span>
-            <span class="stay-stars">★★★★</span>
-            <span class="stay-name">Boutique</span>
-            <span class="stay-price"><b>€€</b> desde ≈186 €/noche·hab.</span>
-            <span class="stay-desc">Hotel con carácter 4★ en la mejor zona, perfecto equilibrio calidad-precio.</span>
-            <span class="stay-eg">Ej.: boutique con terraza en Florencia · 4★ frente al casco antiguo</span>
-          </button>
-          <button type="button" class="stay-tier" data-stay="villa">
-            <span class="stay-stars">★★★★★</span>
-            <span class="stay-name">Villa &amp; Lujo</span>
-            <span class="stay-price"><b>€€€</b> desde ≈316 €/noche·hab.</span>
-            <span class="stay-desc">Villa privada, suite o 5★ con vistas y extras. La experiencia más alta.</span>
-            <span class="stay-eg">Ej.: villa sobre el Lago de Como · suite con caldera en Santorini</span>
-          </button>
-        </div>
-        <p class="quiz-hint">Precio orientativo por noche y habitación (vuelo aparte). El total final se calcula con tus fechas y destino.</p>
-      </div>
-
-      <!-- Paso 4 -->
-      <div class="quiz-step" data-step="3">
-        <p class="quiz-kicker">Paso 4 de 4</p>
-        <h3 class="quiz-q">Clima, ritmo y atrevimiento</h3>
-        <span class="field-label">Clima preferido</span>
+        <p class="quiz-kicker">Paso 3 de 5</p>
+        <h3 class="quiz-q">Clima preferido</h3>
+        <p class="quiz-hint">¿Qué temperatura y ambiente buscas en destino?</p>
         <div class="choice-row" id="climateChoice">
           <button type="button" class="choice" data-climate="warm">☀️ Cálido</button>
           <button type="button" class="choice" data-climate="temperate">🌤️ Templado</button>
           <button type="button" class="choice" data-climate="cool">❄️ Fresco</button>
+          <button type="button" class="choice" data-climate="seasonal">🍂 Experiencias estacionales</button>
           <button type="button" class="choice is-selected" data-climate="any">🎲 Indiferente</button>
         </div>
+        <p class="quiz-hint climate-seasonal-hint" id="climateSeasonalHint" hidden><b>Experiencias estacionales:</b> nieve, colores otoñales, floración primaveral, auroras… viajeros que buscan estaciones marcadas.</p>
+      </div>
+
+      <!-- Paso 4 · Estilo explorador + Ritmo -->
+      <div class="quiz-step" data-step="3">
+        <p class="quiz-kicker">Paso 4 de 5</p>
+        <h3 class="quiz-q">Cómo quieres descubrir</h3>
+        <span class="field-label">Estilo explorador</span>
+        <p class="quiz-hint">¿Prefieres lo icónico, lo auténtico o un equilibrio?</p>
+        <div class="choice-row" id="explorerChoice">
+          <button type="button" class="choice" data-explorer="highlights">🏛️ Lugares icónicos</button>
+          <button type="button" class="choice is-selected" data-explorer="balanced">⚖️ Mezcla equilibrada</button>
+          <button type="button" class="choice" data-explorer="hidden">◈ Joyas escondidas</button>
+        </div>
+
         <span class="field-label">Ritmo del viaje</span>
-        <p class="quiz-hint">El <b>ritmo</b> es cuánto quieres llenar cada día: desde no hacer planes y desconectar, hasta exprimir el destino con muchas actividades.</p>
+        <p class="quiz-hint">Cuánto quieres llenar cada día: desde desconectar sin agenda hasta exprimir el destino.</p>
         <div class="choice-row" id="paceChoice">
           <button type="button" class="choice" data-pace="relax">🧘 Relax total</button>
           <button type="button" class="choice is-selected" data-pace="balanced">⚖️ Equilibrado</button>
           <button type="button" class="choice" data-pace="adventure">🧭 Aventura</button>
         </div>
         <p class="pace-explain" id="paceExplain"></p>
-
-        <label class="toggle" id="gemsToggle">
-          <input type="checkbox" id="hiddenGems" checked />
-          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-          <span class="toggle-text">
-            <b>Ábreme a joyas escondidas</b>
-            <small>Acepto volar + 1–2 h en coche/tren/ferry para llegar a sitios como Positano o el Lago de Como.</small>
-          </span>
-        </label>
       </div>
+
+      <!-- Paso 5 · Presupuesto + Duración + Distancia -->
+      <div class="quiz-step" data-step="4">
+        <p class="quiz-kicker">Paso 5 de 5</p>
+        <h3 class="quiz-q">Presupuesto, duración y distancia</h3>
+
+        <span class="field-label">Presupuesto de viaje</span>
+        <p class="quiz-hint">Sin pedir cifras exactas: solo el nivel que buscas (vuelo + hotel).</p>
+        <div class="choice-row choice-row-budget" id="budgetChoice">
+          <button type="button" class="choice" data-budget="budget">💶 Económico</button>
+          <button type="button" class="choice is-selected" data-budget="mid">💶💶 Medio</button>
+          <button type="button" class="choice" data-budget="premium">💶💶💶 Premium</button>
+          <button type="button" class="choice" data-budget="luxury">✨ Lujo</button>
+        </div>
+
+        <span class="field-label">Duración del viaje</span>
+        <div class="choice-row" id="tripLengthChoice">
+          <button type="button" class="choice" data-trip="weekend">🌅 Escapada<small>2–3 días</small></button>
+          <button type="button" class="choice is-selected" data-trip="short">📅 Corto<small>4–7 días</small></button>
+          <button type="button" class="choice" data-trip="medium">🗓️ Medio<small>1–2 semanas</small></button>
+          <button type="button" class="choice" data-trip="long">🌍 Largo<small>2+ semanas</small></button>
+        </div>
+
+        <span class="field-label">¿Hasta dónde estás dispuesto a volar?</span>
+        <p class="quiz-hint">Nos ayuda a recomendar destinos a la distancia correcta.</p>
+        <div class="choice-row" id="travelRangeChoice">
+          <button type="button" class="choice" data-range="short">✈️ Vuelo corto</button>
+          <button type="button" class="choice is-selected" data-range="medium">🌍 Media distancia</button>
+          <button type="button" class="choice" data-range="long">🌐 Largo recorrido</button>
+          <button type="button" class="choice" data-range="anywhere">🗺️ Cualquier sitio</button>
+        </div>
+      </div>
+
+      <p class="quiz-error" id="quizError" hidden></p>
 
       <div class="quiz-nav">
         <button type="button" class="btn btn-ghost" id="quizPrev" disabled>Atrás</button>
@@ -177,7 +181,7 @@
       <p id="loadingText">Cruzando destinos, vuelos, hoteles, noches y temporada para tus fechas…</p>
     </div>
 
-    <!-- PRESUPUESTO (se conserva oculto como fallback interno; el flujo principal usa estimación viva) -->
+    <!-- PRESUPUESTO (fallback interno para calendario) -->
     <div class="budget-gate card" id="budgetGate" hidden>
       <p class="quiz-kicker">Antes de empezar</p>
       <h3 class="quiz-q">¿Cuánto quieres gastar, aproximadamente, por persona?</h3>
@@ -246,9 +250,53 @@
         <div class="dest-grid" id="destGrid"></div>
       </section>
 
-      <!-- Página 3 · Experiencia -->
+      <!-- Página 3 · Experiencia + refinamiento -->
       <section class="result-step" data-rstep="2">
-        <h3 class="results-title">Nivel de experiencia</h3>
+        <h3 class="results-title">Afinar tu experiencia</h3>
+        <p class="results-sub">Ya con destinos posibles, cuéntanos más para personalizar actividades y alojamiento.</p>
+
+        <div class="refine-panel card" id="refinePanel">
+          <span class="field-label">Intereses gastronómicos <small>(elige todos los que apliquen)</small></span>
+          <div class="chips chips-multi" id="foodInterests">
+            <button type="button" class="chip" data-food="local">🍽️ Cocina local</button>
+            <button type="button" class="chip" data-food="street">🥙 Street food</button>
+            <button type="button" class="chip" data-food="fine">⭐ Alta cocina</button>
+            <button type="button" class="chip" data-food="wine">🍷 Vino &amp; viñedos</button>
+            <button type="button" class="chip" data-food="beer">🍺 Cerveza artesanal</button>
+            <button type="button" class="chip" data-food="markets">🏪 Mercados</button>
+            <button type="button" class="chip" data-food="cooking">👨‍🍳 Experiencias culinarias</button>
+          </div>
+
+          <span class="field-label">Necesidades dietéticas</span>
+          <div class="choice-row choice-row-diet" id="dietaryChoice">
+            <button type="button" class="choice is-selected" data-diet="none">✓ Sin restricciones</button>
+            <button type="button" class="choice" data-diet="vegetarian">🥬 Vegetariano</button>
+            <button type="button" class="choice" data-diet="vegan">🌱 Vegano</button>
+            <button type="button" class="choice" data-diet="glutenfree">🌾 Sin gluten</button>
+            <button type="button" class="choice" data-diet="halal">☪️ Halal</button>
+            <button type="button" class="choice" data-diet="kosher">✡️ Kosher</button>
+          </div>
+
+          <span class="field-label">Alojamiento preferido</span>
+          <div class="choice-row" id="accommodationChoice">
+            <button type="button" class="choice" data-accom="hotel">🏨 Hotel</button>
+            <button type="button" class="choice is-selected" data-accom="boutique">✨ Boutique</button>
+            <button type="button" class="choice" data-accom="resort">🏖️ Resort</button>
+            <button type="button" class="choice" data-accom="apartment">🏠 Apartamento</button>
+            <button type="button" class="choice" data-accom="rural">🌾 Rural</button>
+            <button type="button" class="choice" data-accom="any">🎲 Me da igual</button>
+          </div>
+
+          <span class="field-label">Nivel de comodidad</span>
+          <p class="quiz-hint">Separa quien quiere Japón en hoteles 5★ de quien prefiere una cabaña en la selva.</p>
+          <div class="choice-row" id="comfortChoice">
+            <button type="button" class="choice" data-comfort="comfort">🛎️ Comodidad ante todo</button>
+            <button type="button" class="choice is-selected" data-comfort="balanced">⚖️ Equilibrado</button>
+            <button type="button" class="choice" data-comfort="authentic">🎒 Experiencias auténticas</button>
+          </div>
+        </div>
+
+        <h3 class="results-title refine-tiers-title">Nivel de experiencia</h3>
         <p class="results-sub">Experiencias reales en destino, todas opcionales. Elige el nivel que más te encaje.</p>
         <div class="tiers" id="tiers"></div>
       </section>

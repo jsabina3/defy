@@ -1,18 +1,31 @@
 /* ===================== Estado ===================== */
+const MAX_VIBES = 3;
+const TRIP_NIGHTS = { weekend: 1, short: 4, medium: 10, long: 14 };
+const BUDGET_STAY = { budget: "comodo", mid: "boutique", premium: "boutique", luxury: "villa" };
+const BUDGET_ESTIMATE = { budget: 350, mid: 550, premium: 850, luxury: 1400 };
+
 const state = {
   step: 0,
   prefs: {
     departureCity: "Madrid",
     travelers: 2,
-    nights: 2,
-    vibes: [],          // ordenadas por prioridad (la 1ª es la que más pesa)
+    nights: 4,
+    tripLength: "short",
+    vibes: [],          // hasta 3, ordenadas por prioridad
     climate: "any",
     pace: "balanced",
-    profile: null,      // con quién viaja: solo · pareja · amigos · familia
-    ages: [],           // edad de CADA viajero (una por viajero)
-    budget: null,       // presupuesto aproximado por persona (lo fija el cliente)
-    stayTier: "boutique", // nivel de viaje: comodo · boutique · villa
-    hiddenGems: true,
+    profile: null,
+    ages: [],
+    budgetTier: "mid",
+    budget: null,
+    travelRange: "medium",
+    explorerStyle: "balanced",
+    stayTier: "boutique",
+    foodInterests: [],
+    dietary: "none",
+    accommodation: "boutique",
+    comfortLevel: "balanced",
+    hiddenGems: true,   // derivado de explorerStyle (compat. servidor)
   },
   quote: null,        // respuesta de /api/quote
   minBudget: null,    // mínimo por persona que calcula el servidor (precios + config)
@@ -54,10 +67,32 @@ const io = new IntersectionObserver((entries) => {
 $$(".reveal").forEach((el) => io.observe(el));
 
 /* ===================== Quiz ===================== */
-const STEPS = 4;
+const STEPS = 5;
 const quizBar = $("#quizBar");
 const prevBtn = $("#quizPrev");
 const nextBtn = $("#quizNext");
+const quizError = $("#quizError");
+
+function syncDerivedPrefs() {
+  state.prefs.nights = TRIP_NIGHTS[state.prefs.tripLength] ?? 4;
+  state.prefs.stayTier = BUDGET_STAY[state.prefs.budgetTier] ?? "boutique";
+  state.prefs.hiddenGems = state.prefs.explorerStyle !== "highlights";
+  if (!state.prefs.budget) state.prefs.budget = BUDGET_ESTIMATE[state.prefs.budgetTier] ?? 550;
+}
+
+function validateStep(n) {
+  const err = quizError;
+  if (err) { err.hidden = true; err.textContent = ""; }
+  if (n === 0 && !state.prefs.profile) {
+    if (err) { err.textContent = "Indica con quién viajas para continuar."; err.hidden = false; }
+    return false;
+  }
+  if (n === 1 && !state.prefs.vibes.length) {
+    if (err) { err.textContent = "Elige al menos un interés principal."; err.hidden = false; }
+    return false;
+  }
+  return true;
+}
 
 function showStep(n) {
   state.step = n;
@@ -65,11 +100,13 @@ function showStep(n) {
   quizBar.style.width = ((n + 1) / STEPS) * 100 + "%";
   prevBtn.disabled = n === 0;
   nextBtn.textContent = n === STEPS - 1 ? "Ver mis destinos y precios" : "Siguiente";
+  if (quizError) quizError.hidden = true;
 }
 prevBtn.addEventListener("click", () => state.step > 0 && showStep(state.step - 1));
 nextBtn.addEventListener("click", () => {
+  if (!validateStep(state.step)) return;
   if (state.step < STEPS - 1) showStep(state.step + 1);
-  else submitQuiz();
+  else { syncDerivedPrefs(); submitQuiz(); }
 });
 
 // Stepper viajeros
@@ -79,12 +116,6 @@ $$("[data-step-btn]").forEach((b) => b.addEventListener("click", () => {
   v = Math.max(1, Math.min(8, v));
   input.value = v; state.prefs.travelers = v;
   renderAges();
-}));
-
-// Duración
-$$("#nightsChoice .choice").forEach((c) => c.addEventListener("click", () => {
-  $$("#nightsChoice .choice").forEach((x) => x.classList.remove("is-selected"));
-  c.classList.add("is-selected"); state.prefs.nights = +c.dataset.nights;
 }));
 
 // Ciudad
@@ -123,11 +154,12 @@ function renderAges() {
   }));
 }
 
-// Vibes por ORDEN de prioridad: el orden de click es la prioridad.
+// Vibes por ORDEN de prioridad (máx. 3).
 const VIBE_LABELS = {
   beach: "Costa & playa", culture: "Ciudad & cultura", nature: "Naturaleza & lagos",
   food: "Gastronomía", nightlife: "Fiesta & noche", romantic: "Romántico",
 };
+const PRIORITY_LABELS = ["Principal", "Segundo", "Tercero"];
 function renderVibesPriority() {
   $$("#vibes .chip").forEach((chip) => {
     const v = chip.dataset.vibe;
@@ -140,6 +172,12 @@ function renderVibesPriority() {
       chip.classList.remove("is-selected");
       if (rank) rank.textContent = "";
     }
+  });
+  $$("#prioritySlots .priority-slot").forEach((slot) => {
+    const i = +slot.dataset.slot;
+    const v = state.prefs.vibes[i];
+    slot.classList.toggle("is-filled", !!v);
+    slot.textContent = v ? `${i + 1}.º ${PRIORITY_LABELS[i]}: ${VIBE_LABELS[v]}` : `${i + 1}.º ${PRIORITY_LABELS[i]}`;
   });
   const order = $("#vibesOrder");
   if (order) {
@@ -156,22 +194,48 @@ $$("#vibes .chip").forEach((c) => c.addEventListener("click", () => {
   const v = c.dataset.vibe;
   const i = state.prefs.vibes.indexOf(v);
   if (i >= 0) state.prefs.vibes.splice(i, 1);
-  else state.prefs.vibes.push(v);
+  else if (state.prefs.vibes.length < MAX_VIBES) state.prefs.vibes.push(v);
   renderVibesPriority();
 }));
 
-// Nivel de viaje (destino + alojamiento)
-$$("#stayTiers .stay-tier").forEach((b) => b.addEventListener("click", () => {
-  $$("#stayTiers .stay-tier").forEach((x) => x.classList.remove("is-selected"));
-  b.classList.add("is-selected");
-  state.prefs.stayTier = b.dataset.stay;
+// Clima
+$$("#climateChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#climateChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected");
+  state.prefs.climate = c.dataset.climate;
+  const hint = $("#climateSeasonalHint");
+  if (hint) hint.hidden = state.prefs.climate !== "seasonal";
+}));
+
+// Estilo explorador
+$$("#explorerChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#explorerChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected");
+  state.prefs.explorerStyle = c.dataset.explorer;
+  state.prefs.hiddenGems = state.prefs.explorerStyle !== "highlights";
+}));
+
+// Presupuesto, duración y distancia
+$$("#budgetChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#budgetChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected");
+  state.prefs.budgetTier = c.dataset.budget;
+  state.prefs.stayTier = BUDGET_STAY[state.prefs.budgetTier] ?? "boutique";
+  state.prefs.budget = BUDGET_ESTIMATE[state.prefs.budgetTier] ?? 550;
+}));
+$$("#tripLengthChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#tripLengthChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected");
+  state.prefs.tripLength = c.dataset.trip;
+  state.prefs.nights = TRIP_NIGHTS[state.prefs.tripLength] ?? 4;
+}));
+$$("#travelRangeChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#travelRangeChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected");
+  state.prefs.travelRange = c.dataset.range;
 }));
 
 // Clima / ritmo
-$$("#climateChoice .choice").forEach((c) => c.addEventListener("click", () => {
-  $$("#climateChoice .choice").forEach((x) => x.classList.remove("is-selected"));
-  c.classList.add("is-selected"); state.prefs.climate = c.dataset.climate;
-}));
 // Ritmo del viaje + explicación de qué implica cada opción.
 const PACE_EXPLAIN = {
   relax: "<b>Relax total:</b> días sin agenda. Priorizamos destinos para desconectar (playa, naturaleza, spa) y dejamos las experiencias al mínimo para que mandes tú.",
@@ -189,13 +253,43 @@ $$("#paceChoice .choice").forEach((c) => c.addEventListener("click", () => {
 }));
 updatePaceExplain();
 
-// Joyas escondidas
-$("#hiddenGems").addEventListener("change", (e) => {
-  state.prefs.hiddenGems = e.target.checked;
-});
+// Refinamiento post-destino (paso experiencia)
+function renderFoodInterests() {
+  $$("#foodInterests .chip").forEach((chip) => {
+    chip.classList.toggle("is-selected", state.prefs.foodInterests.includes(chip.dataset.food));
+  });
+}
+$$("#foodInterests .chip").forEach((c) => c.addEventListener("click", () => {
+  const f = c.dataset.food;
+  const i = state.prefs.foodInterests.indexOf(f);
+  if (i >= 0) state.prefs.foodInterests.splice(i, 1);
+  else state.prefs.foodInterests.push(f);
+  renderFoodInterests();
+}));
+$$("#dietaryChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#dietaryChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected");
+  state.prefs.dietary = c.dataset.diet;
+}));
+$$("#accommodationChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#accommodationChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected");
+  state.prefs.accommodation = c.dataset.accom;
+  const accomStay = { hotel: "comodo", boutique: "boutique", resort: "villa", apartment: "comodo", rural: "comodo", any: state.prefs.stayTier };
+  if (c.dataset.accom !== "any") state.prefs.stayTier = accomStay[c.dataset.accom] ?? state.prefs.stayTier;
+}));
+$$("#comfortChoice .choice").forEach((c) => c.addEventListener("click", () => {
+  $$("#comfortChoice .choice").forEach((x) => x.classList.remove("is-selected"));
+  c.classList.add("is-selected");
+  state.prefs.comfortLevel = c.dataset.comfort;
+  if (c.dataset.comfort === "comfort") state.prefs.stayTier = "villa";
+  else if (c.dataset.comfort === "authentic") state.prefs.stayTier = "comodo";
+  else state.prefs.stayTier = BUDGET_STAY[state.prefs.budgetTier] ?? "boutique";
+}));
 
 /* ===================== Cotización ===================== */
 async function submitQuiz() {
+  syncDerivedPrefs();
   $("#quiz").hidden = true;
   $("#loading").hidden = false;
   $("#results").hidden = true;
@@ -1004,4 +1098,7 @@ $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") 
 
 /* ===================== Init ===================== */
 renderAges();
+renderVibesPriority();
+renderFoodInterests();
+syncDerivedPrefs();
 showStep(0);
