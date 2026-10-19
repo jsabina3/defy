@@ -27,7 +27,7 @@ pocos niveles claros, quick win de bienvenida, recompensas sorpresa, canje flexi
 ## Stack
 
 - **Backend:** Node + Express (`server.js`). Elige destinos y estima precios con OpenAI, con **fallback determinista** para que funcione sin IA.
-- **Precios reales (opcional):** Amadeus Self-Service (`src/amadeus.js`) sustituye las estimaciones de vuelo/hotel por precios reales cuando hay credenciales; si faltan o el destino no tiene datos, vuelve a la estimación.
+- **Precios reales (opcional):** RouteStack (`src/routestack.js`) consulta vuelos y hoteles en vivo por MCP y guarda las referencias del inventario (aeropuertos, id de destino, id de hotel, correlación de la búsqueda). Si no hay credenciales de RouteStack, se usa Amadeus Self-Service (`src/amadeus.js`). Si tampoco hay datos, se vuelve a la estimación.
 - **Imágenes (opcional):** Unsplash (`src/images.js`) para fotos de alta calidad por destino; sin clave cae a LoremFlickr en alta resolución. Las fotos locales curadas (`/assets`) tienen prioridad.
 - **Frontend:** HTML + CSS + JS vanilla en `/public` (sin build step).
 - **Datos:** catálogo curado de destinos y tiers en `src/catalog.js`.
@@ -52,7 +52,11 @@ Abre http://localhost:3000
 | ----------------------- | ----------- | ------------------------------------------------------------------ |
 | `OPENAI_API_KEY`        | Sí (IA)     | Clave de OpenAI. Si falta, usa el fallback determinista.           |
 | `OPENAI_MODEL`          | No          | Modelo a usar (por defecto `gpt-5.4-mini`).                        |
-| `AMADEUS_CLIENT_ID`     | No          | Amadeus Self-Service. Activa precios reales de vuelos/hoteles.     |
+| `ROUTESTACK_API_KEY`    | No          | RouteStack. Precios reales y referencias de vuelo/hotel. Tiene prioridad sobre Amadeus. |
+| `ROUTESTACK_API_SECRET` | No          | Secreto para el partner-token (HMAC).                             |
+| `ROUTESTACK_MCP_URL`    | No          | Endpoint MCP. Por defecto `https://mcp.routestack.ai/mcp`.         |
+| `ROUTESTACK_ACCOUNT_ID` | No          | Id de cuenta (informativo).                                        |
+| `AMADEUS_CLIENT_ID`     | No          | Amadeus Self-Service. Respaldo si no hay RouteStack.               |
 | `AMADEUS_CLIENT_SECRET` | No          | Secreto de Amadeus.                                                |
 | `AMADEUS_ENV`           | No          | `test` (gratis) o `production`. Por defecto `test`.                |
 | `UNSPLASH_ACCESS_KEY`   | No          | Unsplash. Activa fotos de alta calidad (fallback: LoremFlickr).    |
@@ -63,7 +67,7 @@ Abre http://localhost:3000
 
 1. Sube el repo a GitHub (el `.gitignore` ya excluye `.env` y `node_modules`).
 2. En Railway: **New Project → Deploy from GitHub repo**.
-3. En **Variables**, añade `OPENAI_API_KEY` (y opcionalmente `OPENAI_MODEL`, `AMADEUS_CLIENT_ID`, `AMADEUS_CLIENT_SECRET`, `AMADEUS_ENV`, `UNSPLASH_ACCESS_KEY`).
+3. En **Variables**, añade `OPENAI_API_KEY` (y opcionalmente `OPENAI_MODEL`, `ROUTESTACK_API_KEY`, `ROUTESTACK_API_SECRET`, `ROUTESTACK_MCP_URL`, `AMADEUS_CLIENT_ID`, `AMADEUS_CLIENT_SECRET`, `AMADEUS_ENV`, `UNSPLASH_ACCESS_KEY`).
 4. Railway detecta Node, ejecuta `npm install` y `npm start`. No toques `PORT`.
 
 ## Endpoints
@@ -78,6 +82,6 @@ Abre http://localhost:3000
 
 ## Notas
 
-- Sin Amadeus, los precios son **estimaciones** (IA + motor de markups). Con Amadeus, el precio base de vuelo/hotel es **real** y la estacionalidad lo modula por fecha. En ningún caso son reservas reales.
+- Sin RouteStack ni Amadeus, los precios son **estimaciones** (IA + motor de markups). Con RouteStack, el precio de la fecha elegida y las referencias de vuelo/hotel salen del inventario en vivo; el calendario usa una cotización de referencia y la estacionalidad solo modula las fechas aún no cotizadas. Amadeus hace lo mismo si RouteStack no está configurado. En ningún caso son reservas reales.
 - Persistencia ligera por fichero (`data/accounts.json`) solo para las cuentas del Pasaporte Defy; el resto del flujo de cotización sigue sin estado. No hay reservas reales ni cobros.
 - **Seguridad:** la `OPENAI_API_KEY` solo se usa en el servidor; nunca llega al navegador. Las contraseñas se guardan con hash **scrypt** + salt y la sesión va en cookie httpOnly; `data/` está en `.gitignore`.

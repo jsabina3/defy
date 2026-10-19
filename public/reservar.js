@@ -1297,7 +1297,7 @@ function updateSummary() {
   $("#summaryLine").textContent = `${dateLabel} · ${state.prefs.travelers} viajeros · ${stayName ? stayName + " · " : ""}${tierName}${feeNote}${budgetNote}`;
   if (hasLivePrice) {
     $("#summaryTotal").textContent = euro(state.livePrice.total);
-    $("#summaryPer").textContent = `· ${euro(per)}/persona${state.livePrice.live ? " · precio en firme" : ""}`;
+    $("#summaryPer").textContent = `· ${euro(per)}/persona${firmPriceLabel(state.livePrice)}`;
   } else {
     $("#summaryTotal").textContent = state.priceLoading ? "Comprobando…" : "Pendiente";
     $("#summaryPer").textContent = "· confirma precio para continuar";
@@ -1305,9 +1305,9 @@ function updateSummary() {
   updateResultNav();
 }
 
-// Recalcula el precio EN FIRME para la fecha elegida (vuelo + hotel reales si
-// hay Amadeus). Muestra primero la estimación del calendario y la sustituye por
-// el precio definitivo cuando llega del servidor (puede variar ligeramente).
+// Recalcula el precio EN FIRME para la fecha elegida (vuelo + hotel reales de
+// RouteStack, o Amadeus si no hay RouteStack). Muestra primero la estimación
+// del calendario y la sustituye cuando llega el precio definitivo.
 async function refreshPrice() {
   if (!state.selectedDate) return false;
   const key = priceKey();
@@ -1359,6 +1359,11 @@ async function refreshPrice() {
   return false;
 }
 
+function firmPriceLabel(data) {
+  if (!data?.live) return "";
+  return data.provider === "routestack" ? " · precio en firme · RouteStack" : " · precio en firme";
+}
+
 function applyLivePrice(data) {
   if (!state.selectedDate) return;
   const totalEl = $("#summaryTotal");
@@ -1368,7 +1373,7 @@ function applyLivePrice(data) {
   if (totalEl) { totalEl.textContent = euro(data.total); totalEl.classList.remove("is-checking"); }
   if (perEl) {
     const per = data.perPerson ?? roundUpTo(data.total / state.prefs.travelers, 5);
-    perEl.textContent = `· ${euro(per)}/persona${data.live ? " · precio en firme" : ""}`;
+    perEl.textContent = `· ${euro(per)}/persona${firmPriceLabel(data)}`;
   }
   updateResultNav();
 }
@@ -1418,6 +1423,20 @@ async function checkout() {
 }
 
 function stars(n) { return "★".repeat(n) + "☆".repeat(Math.max(0, 5 - n)); }
+
+function renderReferences(refs) {
+  if (!refs || refs.provider !== "routestack") return "";
+  const line = (label, value) => (value ? `<div class="hotel-meta"><b>${label}</b> ${value}</div>` : "");
+  return `<div class="cart-includes">
+    <div class="cart-includes-head"><h5>Referencias RouteStack</h5></div>
+    <p class="cart-acts-hint">Códigos del inventario en vivo de este vuelo y este hotel.</p>
+    ${line("Salida", [refs.originAirport, refs.originAirportName].filter(Boolean).join(" · "))}
+    ${line("Llegada", [refs.destinationAirport, refs.destinationAirportName].filter(Boolean).join(" · "))}
+    ${line("Destino", [refs.destinationName, refs.destinationId].filter(Boolean).join(" · "))}
+    ${line("Búsqueda de vuelo", refs.flightCorrelationId)}
+    ${line("Hotel", refs.hotelId)}
+  </div>`;
+}
 
 function renderOverlay(data) {
   const b = data.booking, f = data.finance;
@@ -1469,11 +1488,13 @@ function renderOverlay(data) {
               <div class="flight-route">${b.flightHotel.outbound.from} → ${b.flightHotel.outbound.to}</div></div>
             <div style="text-align:right">${b.flightHotel.outbound.airline}<br><small>${b.flightHotel.outbound.flightNo}</small></div>
           </div>
+          ${b.flightHotel.outbound.stops ? `<div class="hotel-meta">${b.flightHotel.outbound.stops} escala${b.flightHotel.outbound.stops > 1 ? "s" : ""} a la ida</div>` : ""}
           <div class="flight-leg">
             <div><b>${b.flightHotel.inbound.dep}</b> → ${b.flightHotel.inbound.arr}
               <div class="flight-route">${b.flightHotel.inbound.from} → ${b.flightHotel.inbound.to}</div></div>
             <div style="text-align:right">${b.flightHotel.inbound.airline}<br><small>${b.flightHotel.inbound.flightNo}</small></div>
           </div>
+          ${b.flightHotel.inbound.stops ? `<div class="hotel-meta">${b.flightHotel.inbound.stops} escala${b.flightHotel.inbound.stops > 1 ? "s" : ""} a la vuelta</div>` : ""}
           <div class="price-chip">Vuelo para esta fecha · <b>${euro(ch.flight)}</b></div>
         </div>
         <div class="book-box">
@@ -1481,10 +1502,12 @@ function renderOverlay(data) {
           <div class="hotel-name">${b.flightHotel.hotel.name}</div>
           <div class="hotel-meta"><span class="stars">${stars(b.flightHotel.hotel.stars)}</span> · ${b.flightHotel.hotel.neighborhood}</div>
           ${b.flightHotel.hotel.stayType ? `<div class="hotel-meta">${b.flightHotel.hotel.stayType}</div>` : ""}
-          <div class="hotel-meta">Valoración ${b.flightHotel.hotel.rating}/10</div>
+          ${b.flightHotel.hotel.rating ? `<div class="hotel-meta">Valoración ${b.flightHotel.hotel.rating}/10</div>` : ""}
+          ${b.flightHotel.hotel.reference ? `<div class="hotel-meta">Ref. hotel ${b.flightHotel.hotel.reference}</div>` : ""}
           <div class="price-chip">Hotel ${b.nights} noches · <b>${euro(ch.hotel)}</b></div>
         </div>
       </div>
+      ${renderReferences(b.flightHotel.references)}
 
       <div class="cart-includes">
         <div class="cart-includes-head">
@@ -1499,7 +1522,7 @@ function renderOverlay(data) {
       <details class="finance-wrap">
         <summary>Ver desglose interno (coste y margen)</summary>
         <div class="finance">
-          <div class="finance-head">🔒 Precio y margen ${f.live ? "en firme" : "estimados"} para estas fechas</div>
+          <div class="finance-head">🔒 Precio y margen ${f.live ? "en firme" : "estimados"}${f.provider === "routestack" ? " · RouteStack" : ""} para estas fechas</div>
           <div class="fin-row"><span>Precio cobrado al cliente</span><b>${euro(f.chargedTotal)}</b></div>
           ${f.swapFee ? `<div class="fin-row"><span class="muted">Incluye cambio de destino (${f.discards}º descarte)</span><span class="muted">${euro(f.swapFee)}</span></div>` : ""}
           <div class="fin-row"><span class="muted">Coste real vuelos</span><span class="muted">${euro(co.flight)}</span></div>

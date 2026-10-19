@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CATALOG, CATALOG_BY_ID, SEASONS, PRICING, TIERS, STAY_TIERS, stayTierFactor, registerIata } from "./src/catalog.js";
 import { amadeusEnabled, cheapestFlightPP, cheapestHotelNight } from "./src/amadeus.js";
+import { routestackEnabled, stayQuote } from "./src/routestack.js";
 import { unsplashEnabled } from "./src/images.js";
 import { imageGenEnabled, ensureImage, cachedGeneratedUrl, genDir, imageStoreInfo, initImageStore } from "./src/imagegen.js";
 import {
@@ -711,13 +712,55 @@ const usableDest = (p) =>
 /* ------------------------------------------------------------------ */
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
-// Sustituye los precios estimados por precios reales de Amadeus cuando existan.
-// Usa una fecha de referencia (~30 días) y cachea por ruta/destino; el motor de
-// estacionalidad sigue modulando el precio por fecha en el calendario.
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const idx = next++;
+      out[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+// Sustituye los precios estimados por precios reales (RouteStack, o Amadeus si
+// no hay RouteStack). Usa una fecha de referencia (~30 días). El hotel ya viene
+// en la categoría del nivel elegido: se guarda dividido por el factor del nivel
+// porque el calendario vuelve a multiplicarlo. La estacionalidad sigue modulando
+// las fechas que aún no se han cotizado en vivo.
 async function enrichPrices(picks, prefs) {
-  if (!amadeusEnabled()) return;
   const dep = addDays(todayStr(), 30);
   const ret = addDays(dep, prefs.nights || 2);
+  if (routestackEnabled()) {
+    const factor = stayTierFactor(prefs.stayTier) || 1;
+    const stars = stayInfo(prefs.stayTier).stars;
+    await mapLimit(picks, 3, async (p) => {
+      const d = destById(p.id);
+      if (!d) return;
+      const q = await stayQuote({
+        party: "reference",
+        originCity: prefs.departureCity || "Madrid",
+        destinationCity: d.gateway || d.name,
+        departureDate: dep,
+        returnDate: ret,
+        travelers: 1,
+        nights: prefs.nights || 2,
+        stars,
+      });
+      if (Number.isFinite(q?.flightPerPerson)) {
+        p.flightPerPerson = clamp(q.flightPerPerson, 30, 1500);
+        p.flightSource = "routestack";
+      }
+      if (Number.isFinite(q?.hotelPerNight)) {
+        p.hotelPerNight = clamp(q.hotelPerNight / factor, 40, 1500);
+        p.hotelSource = "routestack";
+      }
+    });
+    return;
+  }
+  if (!amadeusEnabled()) return;
   await Promise.allSettled(
     picks.map(async (p) => {
       const d = destById(p.id);
@@ -924,7 +967,7 @@ app.post("/api/quote", async (req, res) => {
     res.json({
       ok: true,
       source: usedAI ? "openai" : "fallback",
-      providers: { amadeus: amadeusEnabled(), unsplash: unsplashEnabled(), imagegen: imageGenEnabled() },
+      providers: { routestack: routestackEnabled(), amadeus: amadeusEnabled(), unsplash: unsplashEnabled(), imagegen: imageGenEnabled() },
       currency: PRICING.currency,
       pricing: PRICING,
       tiers: activityPacks,
@@ -1011,9 +1054,25 @@ async function destProvider(dest, dateStr, prefs, stayFactor, { live = false } =
   const travelers = prefs.travelers;
   const rooms = Math.ceil(travelers / PRICING.peoplePerRoom);
 
-  // En modo "live" consultamos Amadeus para LAS FECHAS EXACTAS elegidas.
+  // En modo "live" cotizamos las fechas exactas. RouteStack trae el total del
+  // grupo (vuelo de todos los viajeros + hotel de las habitaciones y la categoría).
+  // Amadeus sigue como respaldo y devuelve precio por persona / por noche.
+  let quote = null;
   let realFlightPP = null, realHotelNight = null;
-  if (live && amadeusEnabled()) {
+  if (live && routestackEnabled()) {
+    const ret = addDays(dateStr, nights);
+    quote = await stayQuote({
+      party: "actual",
+      originCity: prefs.departureCity || "Madrid",
+      destinationCity: dest.gateway || dest.name,
+      departureDate: dateStr,
+      returnDate: ret,
+      travelers,
+      nights,
+      stars: stayInfo(prefs.stayTier).stars,
+      peoplePerRoom: PRICING.peoplePerRoom,
+    });
+  } else if (live && amadeusEnabled()) {
     const ret = addDays(dateStr, nights);
     [realFlightPP, realHotelNight] = await Promise.all([
       cheapestFlightPP(prefs.departureCity || "Madrid", dest.gateway, dateStr, ret),
@@ -1021,22 +1080,33 @@ async function destProvider(dest, dateStr, prefs, stayFactor, { live = false } =
     ]);
   }
 
-  const flightCost = Number.isFinite(realFlightPP)
-    ? realFlightPP * travelers
-    : dest.flightPerPerson * season * weekend * travelers;
-  const hotelCost = Number.isFinite(realHotelNight)
-    ? realHotelNight * stayFactor * nights * rooms
-    : dest.hotelPerNight * stayFactor * season * nights * rooms;
+  const flightCost = Number.isFinite(quote?.flightTotal)
+    ? quote.flightTotal
+    : Number.isFinite(realFlightPP)
+      ? realFlightPP * travelers
+      : dest.flightPerPerson * season * weekend * travelers;
+  const hotelCost = Number.isFinite(quote?.hotelTotal)
+    ? quote.hotelTotal
+    : Number.isFinite(realHotelNight)
+      ? realHotelNight * stayFactor * nights * rooms
+      : dest.hotelPerNight * stayFactor * season * nights * rooms;
   const transferCost = dest.transferCost * travelers;
 
   const flightCharged = flightCost * PRICING.markups.flight;
   const hotelCharged = hotelCost * PRICING.markups.hotel;
   const transferCharged = transferCost * PRICING.markups.transfer;
+  const source = (Number.isFinite(quote?.flightTotal) || Number.isFinite(quote?.hotelTotal))
+    ? "routestack"
+    : (Number.isFinite(realFlightPP) || Number.isFinite(realHotelNight))
+      ? "amadeus"
+      : null;
 
   return {
     cost: flightCost + hotelCost + transferCost,
     charged: flightCharged + hotelCharged + transferCharged,
-    live: Number.isFinite(realFlightPP) || Number.isFinite(realHotelNight),
+    live: !!source,
+    source,
+    quote: source === "routestack" ? quote : null,
     components: {
       cost: { flight: round(flightCost), hotel: round(hotelCost), transfer: round(transferCost) },
       charged: { flight: round(flightCharged), hotel: round(hotelCharged), transfer: round(transferCharged) },
@@ -1325,6 +1395,28 @@ Devuelve JSON EXACTO (el hotel DEBE ser coherente con el nivel/categoría indica
   return fallbackFlightHotel(dest, prefs, dateStr);
 }
 
+// Convierte la cotización de RouteStack al detalle que muestra la revelación.
+function flightHotelFromQuote(q, prefs) {
+  if (!q || (!q.outbound && !q.hotel?.name)) return null;
+  const stay = stayInfo(prefs.stayTier);
+  return {
+    source: "routestack",
+    outbound: q.outbound || null,
+    inbound: q.inbound || null,
+    hotel: q.hotel?.name
+      ? {
+        name: q.hotel.name,
+        stars: q.hotel.stars || stay.stars,
+        stayType: stay.stayType,
+        neighborhood: q.hotel.neighborhood || "",
+        rating: null,
+        reference: q.hotel.id || q.references?.hotelId || null,
+      }
+      : null,
+    references: q.references || null,
+  };
+}
+
 // Adapta las actividades genéricas del tier a experiencias CONCRETAS del destino
 // Y al perfil/edad del viajero (familia, pareja, amigos, solo), buscando con IA
 // planes realistas para ese destino. El PRECIO de cada actividad se ajusta al
@@ -1450,12 +1542,21 @@ app.post("/api/checkout", async (req, res) => {
       if (!best || x.price.cost < best.price.cost) best = x;
     }
 
-    const [fh, actData] = await Promise.all([
-      aiFlightHotel(best.dest, prefs, dateStr),
-      tier.id === "none"
-        ? Promise.resolve({ items: tier.items, valuePerPerson: 0 })
-        : aiActivities(best.dest, tier, prefs),
-    ]);
+    const realFh = flightHotelFromQuote(best.price.quote, prefs);
+    const needAi = !realFh?.outbound || !realFh?.inbound || !realFh?.hotel?.name;
+    const aiFh = needAi ? await aiFlightHotel(best.dest, prefs, dateStr) : null;
+    const fh = realFh
+      ? {
+        source: "routestack",
+        outbound: realFh.outbound || aiFh?.outbound,
+        inbound: realFh.inbound || aiFh?.inbound,
+        hotel: realFh.hotel?.name ? realFh.hotel : aiFh?.hotel,
+        references: realFh.references,
+      }
+      : aiFh;
+    const actData = tier.id === "none"
+      ? { items: tier.items, valuePerPerson: 0 }
+      : await aiActivities(best.dest, tier, prefs);
     const tierItems = actData.items;
     // Valor de mercado de las experiencias adaptado al destino y al perfil.
     const valuePerPersonAdapted = tier.id === "none" ? 0 : actData.valuePerPerson;
@@ -1523,6 +1624,9 @@ app.post("/api/checkout", async (req, res) => {
         swapFee,
         discards,
         live: pricedPool.some((x) => x.price.live),
+        provider: pricedPool.some((x) => x.price.source === "routestack")
+          ? "routestack"
+          : pricedPool.some((x) => x.price.source === "amadeus") ? "amadeus" : null,
       },
     });
   } catch (err) {
@@ -1566,6 +1670,9 @@ app.post("/api/price", async (req, res) => {
       perPerson: Math.ceil((total / prefs.travelers) / 5) * 5,
       swapFee,
       live: priced.some((p) => p.live),
+      provider: priced.some((p) => p.source === "routestack")
+        ? "routestack"
+        : priced.some((p) => p.source === "amadeus") ? "amadeus" : null,
     });
   } catch (err) {
     console.error("/api/price failed", err);
@@ -1726,6 +1833,7 @@ app.get("/api/health", (_req, res) => res.json({
   ai: !!OPENAI_API_KEY,
   model: OPENAI_MODEL,
   amadeus: amadeusEnabled(),
+  routestack: routestackEnabled(),
   unsplash: unsplashEnabled(),
   imagegen: imageGenEnabled(),
   imageStore: imageStoreInfo(),
@@ -1821,7 +1929,7 @@ Promise.all([initImageStore(), initAccounts()]).then(() => {
     const store = imageStoreInfo();
     console.log(
       `Incógnito en http://localhost:${PORT}  ` +
-      `(IA: ${flag(!!OPENAI_API_KEY)} · Amadeus: ${flag(amadeusEnabled())} · Imágenes IA: ${flag(imageGenEnabled())}` +
+      `(IA: ${flag(!!OPENAI_API_KEY)} · RouteStack: ${flag(routestackEnabled())} · Amadeus: ${flag(amadeusEnabled())} · Imágenes IA: ${flag(imageGenEnabled())}` +
       `${store.persistent ? " · caché persistente" : ""})`
     );
   });
