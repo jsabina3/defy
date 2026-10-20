@@ -554,10 +554,10 @@ em {
 .cal-nav { display: flex; align-items: center; gap: 0.6rem; font-weight: 600; }
 .cal-nav button { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--field-bg); cursor: pointer; font-size: 1.15rem; color: var(--ink); transition: background 0.2s, color 0.2s, border-color 0.2s; }
 .cal-nav button:hover { background: var(--coral); color: #fff; border-color: var(--coral); }
-.cal-nav span { min-width: 150px; text-align: center; text-transform: capitalize; font-family: var(--serif); font-size: 1.15rem; font-weight: 600; }
+.cal-nav span { min-width: 150px; text-align: center; text-transform: none; font-family: var(--serif); font-size: 1.15rem; font-weight: 600; }
 .cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; font-size: 0.7rem; color: var(--ink-soft); text-align: center; margin-bottom: 8px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-.cal-cell { aspect-ratio: 1 / 1; border-radius: 13px; border: 1px solid transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; cursor: pointer; transition: transform 0.15s, border-color 0.15s, background 0.15s, box-shadow 0.15s; padding: 2px; }
+.cal-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 13px; border: 1px solid transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; cursor: pointer; transition: transform 0.15s, border-color 0.15s, background 0.15s, box-shadow 0.15s; padding: 2px; }
 .cal-cell.empty { cursor: default; }
 .cal-cell.disabled { color: rgba(179,166,146,0.4); cursor: not-allowed; }
 .cal-cell .cal-day { font-size: 0.98rem; font-weight: 700; line-height: 1; }
@@ -593,6 +593,38 @@ em {
 }
 .cal-budget b { color: var(--ink); }
 .cal-budget-edit { background: none; border: none; color: var(--coral); font: inherit; font-weight: 700; cursor: pointer; padding: 0; text-decoration: underline; }
+.cal-intro { margin: 0.25rem 0 0; max-width: 34rem; }
+.cal-hint { font-size: 0.86rem; color: var(--ink-soft); margin: 0.9rem 0 0; text-align: center; }
+.cal-cell.picked { border-color: var(--coral); background: rgba(255,106,61,0.14); }
+.cal-cell .cal-mark {
+  position: absolute; top: 4px; right: 4px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--coral); color: #fff; font-size: 0.62rem; font-weight: 800;
+  display: grid; place-items: center; line-height: 1;
+}
+.cal-cell.chosen { background: var(--grad-warm); color: #fff; border-color: transparent; box-shadow: 0 10px 22px -10px var(--coral-deep); transform: translateY(-2px); }
+.cal-cell.chosen .cal-mark { background: #fff; color: var(--coral-deep); }
+.date-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.75rem; margin-top: 1rem; }
+.date-card {
+  text-align: left; border: 1px solid var(--line); background: var(--field-bg); color: var(--ink);
+  border-radius: 16px; padding: 0.9rem 0.95rem 0.85rem; cursor: pointer;
+  display: flex; flex-direction: column; gap: 0.2rem; min-height: 132px;
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.date-card:hover { border-color: var(--coral); transform: translateY(-2px); }
+.date-card.is-chosen { border-color: transparent; background: var(--grad-warm); color: #fff; box-shadow: 0 12px 24px -14px var(--coral-deep); }
+.date-card.is-loading, .date-card.is-error { cursor: default; }
+.date-card.is-loading:hover, .date-card.is-error:hover { transform: none; border-color: var(--line); }
+.date-card-kicker { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--coral); }
+.date-card.is-chosen .date-card-kicker { color: #fff5ec; }
+.date-card-when { font-family: var(--serif); font-size: 1.05rem; font-weight: 650; text-transform: capitalize; }
+.date-card-back { font-size: 0.78rem; color: var(--ink-soft); text-transform: capitalize; }
+.date-card.is-chosen .date-card-back { color: rgba(255,245,236,0.85); }
+.date-card-price { font-family: var(--serif); font-size: 1.45rem; font-weight: 700; margin-top: 0.35rem; }
+.date-card-price small { font-family: var(--sans, Inter, sans-serif); font-size: 0.72rem; font-weight: 600; }
+.date-card-meta { font-size: 0.75rem; color: var(--ink-soft); }
+.date-card.is-chosen .date-card-meta { color: rgba(255,245,236,0.88); }
+.date-card-meta.is-warn { color: var(--coral); font-weight: 700; }
+.date-card.is-chosen .date-card-meta.is-warn { color: #fff; }
 .cal-legend { font-size: 0.78rem; color: var(--ink-soft); margin-top: 1.2rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; justify-content: center; }
 .cal-legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .dot-low { background: #5fd897; } .dot-mid { background: var(--gold); } .dot-high { background: var(--coral); }

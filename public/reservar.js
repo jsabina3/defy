@@ -37,7 +37,10 @@ const state = {
   quote: null,        // respuesta de /api/quote
   minBudget: null,    // mínimo por persona que calcula el servidor (precios + config)
   discarded: new Set(),
-  selectedDate: null, // 'YYYY-MM-DD'
+  selectedDate: null, // 'YYYY-MM-DD' — la salida elegida entre las candidatas
+  candidateDates: [], // 2 o 3 salidas que el viajero marca
+  dateQuotes: {},     // fecha -> { key, status, data }
+  dateLimitHint: false,
   selectedTier: "none", // arranca en "solo vuelo + hotel"; el nivel se elige en el paso 3
   calMonth: null,     // Date (día 1 del mes mostrado)
   resultStep: 0,      // 0 calendario · 1 destinos · 2 experiencia
@@ -67,12 +70,28 @@ function discardFeeTotal() {
 
 /* Caché de precios en firme (clave: fecha|tier|descartes|destinos activos) */
 const priceCache = {};
-let priceReqSeq = 0;
-function priceKey() {
+const MIN_CANDIDATE_DATES = 2;
+const MAX_CANDIDATE_DATES = 3;
+function priceKeyFor(date) {
   return [
-    state.selectedDate, state.selectedTier, state.discarded.size,
+    date,
+    state.selectedTier,
+    [...state.discarded].sort().join(","),
     activeDestinations().map((d) => d.id).join(","),
   ].join("|");
+}
+function priceKey() {
+  return priceKeyFor(state.selectedDate);
+}
+function resetDateSelection() {
+  state.selectedDate = null;
+  state.candidateDates = [];
+  state.dateQuotes = {};
+  state.dateLimitHint = false;
+  state.livePrice = null;
+  state.livePriceKey = null;
+  state.priceLoading = false;
+  Object.keys(priceCache).forEach((k) => delete priceCache[k]);
 }
 
 /* ===================== Animaciones de entrada ===================== */
@@ -155,7 +174,7 @@ function showStep(n) {
   $$(".quiz-step").forEach((s) => s.classList.toggle("is-active", +s.dataset.step === n));
   quizBar.style.width = ((n + 1) / STEPS) * 100 + "%";
   prevBtn.disabled = n === 0;
-  nextBtn.textContent = n === STEPS - 1 ? "Ver mis destinos y precios" : "Siguiente";
+  nextBtn.textContent = n === STEPS - 1 ? "Ver mis destinos" : "Siguiente";
   if (quizError) quizError.hidden = true;
 }
 prevBtn.addEventListener("click", () => state.step > 0 && showStep(state.step - 1));
@@ -566,7 +585,7 @@ function renderAdjustPreview(data) {
   }
   if (minEl) {
     minEl.innerHTML = Number.isFinite(calMin)
-      ? `No puedes bajar de <b>${euro(calMin)}/persona</b> — es el mínimo del calendario con esta configuración.`
+      ? `No puedes bajar de <b>${euro(calMin)}/persona</b> — es la referencia de esta configuración.`
       : "";
   }
 
@@ -578,7 +597,7 @@ function renderAdjustPreview(data) {
   if (data.requiresNewQuote) {
     html += `<span class="adjust-badge-new">Generará destinos y precios nuevos</span>`;
   } else if (Number.isFinite(calMin)) {
-    html += `<span class="adjust-preview-note">Los destinos se mantienen; el calendario se recalculará con tu nuevo tope.</span>`;
+    html += `<span class="adjust-preview-note">Los destinos se mantienen. Volverás a elegir 2 o 3 fechas.</span>`;
   }
   body.innerHTML = html;
 }
@@ -588,12 +607,12 @@ function renderConfigStrip() {
   if (!strip || !state.quote) return;
   const p = state.prefs;
   const stay = (state.quote.stayTiers || []).find((t) => t.id === p.stayTier);
-  const calMin = state.calendarMin;
+  const firm = state.livePrice?.perPerson;
   strip.hidden = false;
   strip.innerHTML = `
     <span class="config-chip">📅 <b>${p.days || p.nights + 1}</b> días</span>
     <span class="config-chip">🏨 <b>${stay?.name || STAY_LABELS[p.stayTier] || "Boutique"}</b></span>
-    <span class="config-chip">💶 desde <b>${Number.isFinite(calMin) ? euro(calMin) : "—"}</b>/p</span>
+    ${Number.isFinite(firm) ? `<span class="config-chip">💶 <b>${euro(firm)}</b>/p</span>` : ""}
     ${Number.isFinite(p.budget) ? `<span class="config-chip">tope <b>${euro(p.budget)}</b>/p</span>` : ""}
     <span class="config-chip">✈️ ${RANGE_LABELS_UI[p.travelRange] || "Media distancia"}</span>
     <button type="button" class="config-strip-edit" id="configStripEdit">Ajustar →</button>`;
@@ -650,11 +669,7 @@ async function applyAdjustDraft() {
     if (Number.isFinite(savedBudget)) state.prefs.budget = savedBudget;
     state.minBudget = Number.isFinite(data.minBudgetPerPerson) ? data.minBudgetPerPerson : null;
     state.discarded = new Set();
-    state.selectedDate = null;
-    state.livePrice = null;
-    state.livePriceKey = null;
-    state.priceLoading = false;
-    Object.keys(priceCache).forEach((k) => delete priceCache[k]);
+    resetDateSelection();
     state.selectedTier = "none";
     state.calMonth = startMonth(minDate());
     $("#loading").hidden = true;
@@ -785,11 +800,7 @@ async function submitQuiz() {
     state.prefs = data.prefs; // normalizado por el servidor
     state.minBudget = Number.isFinite(data.minBudgetPerPerson) ? data.minBudgetPerPerson : null;
     state.discarded = new Set();
-    state.selectedDate = null;
-    state.livePrice = null;
-    state.livePriceKey = null;
-    state.priceLoading = false;
-    Object.keys(priceCache).forEach((k) => delete priceCache[k]);
+    resetDateSelection();
     state.selectedTier = "none";
     state.calMonth = startMonth(minDate());
     $("#loading").hidden = true;
@@ -919,7 +930,8 @@ function updateResultNav() {
   const prev = $("#rPrev"), next = $("#rNext");
   if (!prev || !next) return;
   prev.disabled = state.resultStep === 0;
-  const needsPrice = !!state.selectedDate && state.livePriceKey !== priceKey();
+  const datesReady = state.candidateDates.length >= MIN_CANDIDATE_DATES && !!state.selectedDate;
+  const needsPrice = datesReady && state.livePriceKey !== priceKey();
   if (state.priceLoading) {
     next.textContent = "Comprobando precio…";
     next.disabled = true;
@@ -927,15 +939,15 @@ function updateResultNav() {
   }
   if (state.resultStep === RSTEPS - 1) {
     next.textContent = "Reservar a ciegas";
-    next.disabled = !state.selectedDate || needsPrice;
+    next.disabled = !datesReady || needsPrice;
   } else {
     next.textContent = "Siguiente →";
-    next.disabled = (state.resultStep === 0 && !state.selectedDate) || needsPrice;
+    next.disabled = (state.resultStep === 0 && !datesReady) || needsPrice;
   }
 }
 $("#rPrev").addEventListener("click", () => { if (state.resultStep > 0) showResultStep(state.resultStep - 1); });
 $("#rNext").addEventListener("click", async () => {
-  if (!state.selectedDate) { showResultStep(0); return; }
+  if (state.candidateDates.length < MIN_CANDIDATE_DATES || !state.selectedDate) { showResultStep(0); return; }
   const ok = await ensureFreshPrice();
   if (!ok) return;
   if (state.resultStep < RSTEPS - 1) showResultStep(state.resultStep + 1);
@@ -1166,66 +1178,65 @@ function tripRange(startStr) {
   return { start: startStr, end: addDaysStr(startStr, nights), set };
 }
 
-// Muestra bajo el calendario todos los días que incluiría el viaje.
+function dateLabel(ds, opts) {
+  return new Date(ds + "T12:00:00").toLocaleDateString("es-ES", opts);
+}
+
 function updateTripCaption() {
   const cap = $("#calTrip");
   if (!cap) return;
   if (!state.selectedDate) { cap.hidden = true; return; }
   const r = tripRange(state.selectedDate);
   const opts = { weekday: "short", day: "numeric", month: "short" };
-  const start = new Date(r.start + "T12:00:00").toLocaleDateString("es-ES", opts);
-  const end = new Date(r.end + "T12:00:00").toLocaleDateString("es-ES", opts);
+  const start = dateLabel(r.start, opts);
+  const end = dateLabel(r.end, opts);
   const nights = state.prefs.nights;
   cap.hidden = false;
   const days = state.prefs.days || nights + 1;
-  cap.innerHTML = `🧳 Tu viaje: <b>${start}</b> → <b>${end}</b> · ${days} días, ${nights} ${nights === 1 ? "noche" : "noches"} (resaltados en el calendario)`;
+  cap.innerHTML = `🧳 Tu salida: <b>${start}</b> → <b>${end}</b> · ${days} días, ${nights} ${nights === 1 ? "noche" : "noches"}`;
+}
+
+function renderDateHint() {
+  const el = $("#calHint");
+  if (!el) return;
+  const n = state.candidateDates.length;
+  if (state.dateLimitHint && n >= MAX_CANDIDATE_DATES) {
+    el.textContent = "Máximo 3 fechas. Quita una si quieres cambiarla.";
+    return;
+  }
+  if (n === 0) el.textContent = "Marca 2 o 3 días de salida.";
+  else if (n === 1) el.textContent = "Añade al menos otra fecha para comparar el precio real.";
+  else if (!state.selectedDate) el.textContent = "Elige con cuál de estas salidas te quedas.";
+  else el.textContent = "Puedes cambiar la salida elegida o sustituir una fecha.";
 }
 
 function renderCalendar() {
   const grid = $("#calGrid");
   grid.innerHTML = "";
   const month = state.calMonth;
-  $("#calMonth").textContent = month.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+  const monthLabel = month.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+  $("#calMonth").textContent = monthLabel.charAt(0).toLocaleUpperCase("es") + monthLabel.slice(1);
 
-  // Banner del presupuesto elegido: los días por encima se atenúan en gris.
   const budgetEl = $("#calBudget");
   if (budgetEl) {
     if (Number.isFinite(state.prefs.budget)) {
       budgetEl.hidden = false;
-      const calMin = state.calendarMin;
-      const minNote = Number.isFinite(calMin) ? `Mejor precio: <b>${euro(calMin)}</b>/persona · ` : "";
-      budgetEl.innerHTML = `💶 ${minNote}Tope: <b>${euro(state.prefs.budget)}/persona</b> · <button type="button" class="cal-budget-edit" id="calBudgetEdit">ajustar</button> · los días por encima del tope aparecen atenuados.`;
-      const editBtn = $("#calBudgetEdit");
-      if (editBtn) editBtn.addEventListener("click", openAdjustPanel);
+      budgetEl.innerHTML = `💶 Tope orientativo: <b>${euro(state.prefs.budget)}/persona</b> · <button type="button" class="cal-budget-edit" id="calBudgetEdit">ajustar</button>`;
+      $("#calBudgetEdit")?.addEventListener("click", openAdjustPanel);
     } else {
       budgetEl.hidden = true;
     }
   }
 
-  // El calendario muestra SIEMPRE el precio base "vuelo + hotel" (sin actividades).
-  // El nivel de experiencia se elige en el paso 3 y se suma en el resumen/total.
-  const tier = { perPersonCost: 0, pricePerPerson: 0 };
   const min = minDate(); min.setHours(0, 0, 0, 0);
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const offset = (first.getDay() + 6) % 7; // lunes primero
   const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const range = state.selectedDate ? tripRange(state.selectedDate) : null;
 
   for (let i = 0; i < offset; i++) {
     const e = document.createElement("div"); e.className = "cal-cell empty"; grid.appendChild(e);
   }
-
-  // Precios del mes para clasificar low/mid/high
-  const monthPrices = [];
-  for (let day = 1; day <= daysInMonth; day++) {
-    const date = new Date(month.getFullYear(), month.getMonth(), day);
-    if (date >= min) monthPrices.push(surpriseCharged(fmt(date), tier) / state.prefs.travelers);
-  }
-  monthPrices.sort((a, b) => a - b);
-  const q1 = monthPrices[Math.floor(monthPrices.length * 0.33)] || 0;
-  const q2 = monthPrices[Math.floor(monthPrices.length * 0.66)] || 0;
-
-  // Días que abarca el viaje según la salida elegida (para resaltar el rango).
-  const range = state.selectedDate ? tripRange(state.selectedDate) : null;
 
   for (let day = 1; day <= daysInMonth; day++) {
     const date = new Date(month.getFullYear(), month.getMonth(), day);
@@ -1234,29 +1245,115 @@ function renderCalendar() {
     cell.type = "button";
     if (date < min) {
       cell.className = "cal-cell disabled";
+      cell.disabled = true;
       cell.innerHTML = `<span class="cal-day">${day}</span>`;
     } else {
-      const per = surpriseCharged(ds, tier) / state.prefs.travelers;
-      const level = per <= q1 ? "low" : per <= q2 ? "mid" : "high";
-      let cls = `cal-cell avail ${level}`;
-      if (Number.isFinite(state.prefs.budget) && roundUpTo(per, 5) > state.prefs.budget) cls += " over-budget";
-      if (range && range.set.has(ds)) {
+      const pickedAt = state.candidateDates.indexOf(ds);
+      const chosen = state.selectedDate === ds;
+      let cls = "cal-cell avail";
+      if (pickedAt >= 0) cls += " picked";
+      if (chosen) cls += " chosen";
+      if (range && range.set.has(ds) && !chosen) {
         cls += " in-range";
-        if (ds === range.start) cls += " range-start";
         if (ds === range.end) cls += " range-end";
       }
-      if (state.selectedDate === ds) cls += " selected";
       cell.className = cls;
-      cell.innerHTML = `<span class="cal-day">${day}</span><span class="cal-price">${euro(roundUpTo(per, 5))}</span>`;
-      cell.addEventListener("click", () => {
-        state.selectedDate = ds;
-        invalidateLivePrice();
-        renderCalendar(); updateSummary(); refreshPrice();
-      });
+      cell.innerHTML = `<span class="cal-day">${day}</span>${pickedAt >= 0 ? `<span class="cal-mark">${pickedAt + 1}</span>` : ""}`;
+      cell.addEventListener("click", () => toggleCandidateDate(ds));
     }
     grid.appendChild(cell);
   }
   updateTripCaption();
+  renderDateOptions();
+}
+
+function toggleCandidateDate(ds) {
+  const i = state.candidateDates.indexOf(ds);
+  if (i >= 0) {
+    state.candidateDates.splice(i, 1);
+    delete state.dateQuotes[ds];
+    state.dateLimitHint = false;
+    if (state.selectedDate === ds) {
+      state.selectedDate = null;
+      invalidateLivePrice();
+    }
+  } else if (state.candidateDates.length >= MAX_CANDIDATE_DATES) {
+    state.dateLimitHint = true;
+  } else {
+    state.candidateDates.push(ds);
+    state.candidateDates.sort();
+    state.dateLimitHint = false;
+  }
+  if (state.candidateDates.length < MIN_CANDIDATE_DATES) {
+    state.selectedDate = null;
+    invalidateLivePrice();
+  }
+  renderCalendar();
+  updateSummary();
+  renderConfigStrip();
+  if (state.candidateDates.length >= MIN_CANDIDATE_DATES) quoteCandidateDates();
+}
+
+function chooseCandidateDate(ds) {
+  const q = state.dateQuotes[ds];
+  if (!q || q.status !== "ok" || q.key !== priceKeyFor(ds)) return;
+  state.selectedDate = ds;
+  applyLivePrice(q.data);
+  renderCalendar();
+  updateSummary();
+  renderConfigStrip();
+}
+
+function renderDateOptions() {
+  const wrap = $("#dateOptions");
+  renderDateHint();
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  if (state.candidateDates.length < MIN_CANDIDATE_DATES) return;
+
+  const priced = state.candidateDates.flatMap((ds) => {
+    const q = state.dateQuotes[ds];
+    if (!q || q.status !== "ok" || q.key !== priceKeyFor(ds) || !Number.isFinite(q.data?.perPerson)) return [];
+    return [q.data.perPerson];
+  });
+  const best = priced.length > 1 ? Math.min(...priced) : null;
+  const opts = { weekday: "short", day: "numeric", month: "short" };
+
+  for (const ds of state.candidateDates) {
+    const q = state.dateQuotes[ds];
+    const fresh = q && q.key === priceKeyFor(ds) ? q : null;
+    const card = document.createElement("button");
+    card.type = "button";
+    const back = dateLabel(tripRange(ds).end, opts);
+    const when = dateLabel(ds, opts);
+    const chosen = state.selectedDate === ds;
+
+    if (!fresh || fresh.status === "loading") {
+      card.className = "date-card is-loading";
+      card.disabled = true;
+      card.innerHTML = `<span class="date-card-kicker">Cotizando</span><span class="date-card-when">${when}</span><span class="date-card-back">vuelta ${back}</span><span class="date-card-meta">Consultando vuelo y hotel…</span>`;
+    } else if (fresh.status === "error") {
+      card.className = "date-card is-error";
+      card.disabled = true;
+      card.innerHTML = `<span class="date-card-kicker">Sin precio</span><span class="date-card-when">${when}</span><span class="date-card-back">vuelta ${back}</span><span class="date-card-meta">No hemos podido cotizar esta salida. Prueba otra fecha.</span>`;
+    } else {
+      const data = fresh.data;
+      const per = data.perPerson ?? roundUpTo(data.total / state.prefs.travelers, 5);
+      const over = Number.isFinite(state.prefs.budget) && per > state.prefs.budget;
+      const isBest = best != null && per === best;
+      card.className = "date-card" + (chosen ? " is-chosen" : "");
+      const firm = data.live ? "Precio en firme" : "Estimación";
+      const kicker = chosen ? "Tu salida" : (isBest ? "La más barata" : firm);
+      const meta = over
+        ? `<span class="date-card-meta is-warn">Supera tu tope de ${euro(state.prefs.budget)}/persona</span>`
+        : `<span class="date-card-meta">${firm}${chosen ? "" : " · pulsa para elegirla"}</span>`;
+      card.innerHTML = `<span class="date-card-kicker">${kicker}</span><span class="date-card-when">${when}</span><span class="date-card-back">vuelta ${back}</span><span class="date-card-price">${euro(per)} <small>/persona</small></span>${meta}`;
+      card.addEventListener("click", () => chooseCandidateDate(ds));
+    }
+    wrap.appendChild(card);
+  }
+  const rect = wrap.getBoundingClientRect();
+  if (rect.top > window.innerHeight - 140) wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 $("#calPrev").addEventListener("click", () => {
@@ -1280,9 +1377,12 @@ function updateSummary() {
   const stayName = stay ? stay.name : "";
 
   if (!state.selectedDate) {
-    $("#summaryLine").textContent = `${state.prefs.travelers} viajeros · ${state.prefs.days || state.prefs.nights + 1} días · ${stayName ? stayName + " · " : ""}${tierName}`;
-    $("#summaryTotal").textContent = "Elige fecha";
-    $("#summaryPer").textContent = "";
+    const n = state.candidateDates.length;
+    $("#summaryLine").textContent = n >= MIN_CANDIDATE_DATES
+      ? "Compara tus salidas y elige una"
+      : "Elige 2 o 3 fechas que te encajen";
+    $("#summaryTotal").textContent = "—";
+    $("#summaryPer").textContent = n === 1 ? "· falta al menos otra" : "";
     updateResultNav();
     return;
   }
@@ -1305,58 +1405,87 @@ function updateSummary() {
   updateResultNav();
 }
 
-// Recalcula el precio EN FIRME para la fecha elegida (vuelo + hotel reales de
-// RouteStack, o Amadeus si no hay RouteStack). Muestra primero la estimación
-// del calendario y la sustituye cuando llega el precio definitivo.
-async function refreshPrice() {
-  if (!state.selectedDate) return false;
-  const key = priceKey();
-  if (priceCache[key]) { applyLivePrice(priceCache[key]); return true; }
+function destinationsPayload() {
+  return state.quote.destinations.map((d) => ({
+    ...d, discarded: state.discarded.has(d.id),
+  }));
+}
 
-  const totalEl = $("#summaryTotal");
-  const perEl = $("#summaryPer");
-  state.priceLoading = true;
-  if (totalEl) totalEl.classList.add("is-checking");
-  if (perEl) perEl.textContent = "· comprobando precio…";
-  updateResultNav();
+async function fetchQuote(date) {
+  const key = priceKeyFor(date);
+  if (priceCache[key]) return priceCache[key];
+  const res = await fetch("/api/price", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prefs: state.prefs,
+      date,
+      tierId: state.selectedTier === "none" ? "none" : state.selectedTier,
+      tier: currentTier(),
+      discards: state.discarded.size,
+      destinations: destinationsPayload(),
+    }),
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || "price");
+  priceCache[key] = data;
+  return data;
+}
 
-  const seq = ++priceReqSeq;
-  try {
-    const res = await fetch("/api/price", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prefs: state.prefs,
-        date: state.selectedDate,
-        tierId: state.selectedTier === "none" ? "none" : state.selectedTier,
-        tier: currentTier(),
-        discards: state.discarded.size,
-        // Enviamos la ficha COMPLETA del destino (la IA puede haberlo inventado,
-        // así el servidor lo cotiza aunque no esté en su catálogo).
-        destinations: state.quote.destinations.map((d) => ({
-          ...d, discarded: state.discarded.has(d.id),
-        })),
-      }),
-    });
-    const data = await res.json();
-    if (seq !== priceReqSeq) return; // respuesta obsoleta (cambió la selección)
-    if (data.ok) {
-      priceCache[key] = data;
-      applyLivePrice(data);
-      return true;
-    } else {
-      updateSummary();
-    }
-  } catch (err) {
-    console.error(err);
-    if (seq === priceReqSeq) updateSummary();
-  } finally {
-    if (seq === priceReqSeq) state.priceLoading = false;
-    if (seq === priceReqSeq && totalEl) totalEl.classList.remove("is-checking");
-    if (seq === priceReqSeq && state.livePriceKey !== priceKey()) updateSummary();
-    if (seq === priceReqSeq) updateResultNav();
+// Cotiza en firme solo las 2 o 3 salidas marcadas (RouteStack, o Amadeus si no hay).
+let quoteSeq = 0;
+async function quoteCandidateDates() {
+  const dates = [...state.candidateDates];
+  if (dates.length < MIN_CANDIDATE_DATES) {
+    state.priceLoading = false;
+    renderDateOptions();
+    updateSummary();
+    return false;
   }
-  return false;
+  const seq = ++quoteSeq;
+  const pending = [];
+  for (const date of dates) {
+    const key = priceKeyFor(date);
+    if (priceCache[key]) state.dateQuotes[date] = { key, status: "ok", data: priceCache[key] };
+    else {
+      state.dateQuotes[date] = { key, status: "loading", data: null };
+      pending.push(date);
+    }
+  }
+  for (const d of Object.keys(state.dateQuotes)) {
+    if (!dates.includes(d)) delete state.dateQuotes[d];
+  }
+  const chosenNow = state.dateQuotes[state.selectedDate];
+  if (chosenNow?.status === "ok" && chosenNow.key === priceKey()) applyLivePrice(chosenNow.data);
+  state.priceLoading = !!state.selectedDate && pending.includes(state.selectedDate);
+  renderDateOptions();
+  updateSummary();
+
+  await Promise.all(pending.map(async (date) => {
+    try {
+      const data = await fetchQuote(date);
+      if (seq !== quoteSeq || !state.candidateDates.includes(date)) return;
+      state.dateQuotes[date] = { key: priceKeyFor(date), status: "ok", data };
+    } catch (err) {
+      console.error(err);
+      if (seq !== quoteSeq || !state.candidateDates.includes(date)) return;
+      state.dateQuotes[date] = { key: priceKeyFor(date), status: "error", data: null };
+    }
+  }));
+  if (seq !== quoteSeq) return false;
+  state.priceLoading = false;
+  const chosen = state.dateQuotes[state.selectedDate];
+  if (state.selectedDate && chosen?.status === "ok" && chosen.key === priceKey()) applyLivePrice(chosen.data);
+  else if (state.selectedDate && chosen?.status === "error") invalidateLivePrice();
+  renderCalendar();
+  renderConfigStrip();
+  updateSummary();
+  return !!(state.selectedDate && state.livePriceKey === priceKey());
+}
+
+async function refreshPrice() {
+  if (state.candidateDates.length < MIN_CANDIDATE_DATES) return false;
+  return quoteCandidateDates();
 }
 
 function firmPriceLabel(data) {
@@ -1384,7 +1513,7 @@ function invalidateLivePrice() {
 }
 
 async function ensureFreshPrice() {
-  if (!state.selectedDate) return false;
+  if (!state.selectedDate || state.candidateDates.length < MIN_CANDIDATE_DATES) return false;
   if (state.livePriceKey === priceKey()) return true;
   updateSummary();
   return refreshPrice();
@@ -1392,7 +1521,7 @@ async function ensureFreshPrice() {
 
 /* ===================== Checkout ===================== */
 async function checkout() {
-  if (!state.selectedDate) { showResultStep(0); return; }
+  if (state.candidateDates.length < MIN_CANDIDATE_DATES || !state.selectedDate) { showResultStep(0); return; }
   const btn = $("#rNext");
   btn.disabled = true; btn.textContent = "Reservando…";
   try {

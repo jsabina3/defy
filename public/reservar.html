@@ -188,14 +188,14 @@
     <!-- LOADING -->
     <div class="planner-loading" id="loading" hidden>
       <div class="loader-orb"></div>
-      <p id="loadingText">Cruzando destinos, vuelos, hoteles, noches y temporada para tus fechas…</p>
+      <p id="loadingText">Buscando destinos que encajan contigo…</p>
     </div>
 
     <!-- PRESUPUESTO (fallback interno para calendario) -->
     <div class="budget-gate card" id="budgetGate" hidden>
       <p class="quiz-kicker">Antes de empezar</p>
       <h3 class="quiz-q">¿Cuánto quieres gastar, aproximadamente, por persona?</h3>
-      <p class="quiz-hint">Es solo una referencia para guiarte por el calendario. Vuelo + hotel, sin actividades. Podrás cambiarla cuando quieras.</p>
+      <p class="quiz-hint">Es una referencia de vuelo + hotel, sin actividades. Las fechas que elijas se cotizan en firme.</p>
 
       <div class="budget-min" id="budgetMin"></div>
 
@@ -237,11 +237,14 @@
         <span class="rstep-pill" data-pill="2"><b>3</b> Experiencia</span>
       </div>
 
-      <!-- Página 1 · Calendario -->
+      <!-- Página 1 · Fechas -->
       <section class="result-step is-active" data-rstep="0">
         <div class="calendar-wrap">
           <div class="calendar-head">
-            <h3 class="results-title">Elige tu fecha de salida</h3>
+            <div>
+              <h3 class="results-title">Elige 2 o 3 salidas</h3>
+              <p class="results-sub cal-intro">Marca los días que te encajan. Cotizamos solo esas fechas, con el precio real de vuelo y hotel.</p>
+            </div>
             <div class="cal-nav">
               <button id="calPrev" aria-label="Mes anterior">‹</button>
               <span id="calMonth"></span>
@@ -253,8 +256,9 @@
             <span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span>
           </div>
           <div class="cal-grid" id="calGrid"></div>
+          <p class="cal-hint" id="calHint"></p>
           <p class="cal-trip" id="calTrip" hidden></p>
-          <p class="cal-legend"><i class="dot-low"></i> mejor precio &nbsp; <i class="dot-mid"></i> medio &nbsp; <i class="dot-high"></i> alta demanda · precio por persona, vuelo + hotel</p>
+          <div class="date-options" id="dateOptions"></div>
         </div>
       </section>
 
@@ -354,11 +358,11 @@
         <section class="adjust-section">
           <h4 class="adjust-section-title">💶 Presupuesto</h4>
           <div class="adjust-cal-min" id="adjCalMin">
-            <span class="adjust-cal-min-label">Mejor precio en calendario</span>
+            <span class="adjust-cal-min-label">Referencia de esta configuración</span>
             <span class="adjust-cal-min-value" id="adjCalMinValue">—</span>
             <span class="adjust-cal-min-date" id="adjCalMinDate"></span>
           </div>
-          <p class="quiz-hint">Es el día más barato que verás en el calendario (vuelo + hotel, sin actividades). Ajusta tu tope desde ahí.</p>
+          <p class="quiz-hint">Estimación de vuelo + hotel, sin actividades. Las 2 o 3 fechas que elijas se cotizan aparte, en firme.</p>
           <label class="field budget-input-field">
             <span>Tu presupuesto tope por persona</span>
             <div class="stepper trip-days-stepper budget-stepper">
