@@ -544,12 +544,22 @@ em {
 .results-split { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 2rem; align-items: start; }
 
 /* Calendar */
+.quiz-calendar { margin: 0.2rem 0 1.4rem; max-width: none; padding: 1rem 1rem 0.9rem; box-shadow: none; }
+.quiz-date-picks { list-style: none; margin: 0.85rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.quiz-date-picks li { font-size: 0.92rem; font-weight: 650; text-transform: capitalize; }
 .calendar-wrap {
   background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent), var(--paper);
   border: 1px solid var(--line); border-radius: var(--radius);
   padding: clamp(1.4rem, 3vw, 2.1rem); box-shadow: var(--shadow-sm);
   max-width: 680px; margin: 0 auto;
 }
+.calendar-wrap.quiz-calendar {
+  margin: 0.2rem 0 1.4rem;
+  max-width: none;
+  padding: 1rem;
+  box-shadow: none;
+}
+.quiz-calendar .calendar-head { justify-content: center; margin-bottom: 0.8rem; }
 .calendar-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.3rem; gap: 1rem; flex-wrap: wrap; }
 .cal-nav { display: flex; align-items: center; gap: 0.6rem; font-weight: 600; }
 .cal-nav button { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--field-bg); cursor: pointer; font-size: 1.15rem; color: var(--ink); transition: background 0.2s, color 0.2s, border-color 0.2s; }

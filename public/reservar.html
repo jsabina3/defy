@@ -167,6 +167,24 @@
           <p class="quiz-hint" id="tripDaysHint"></p>
         </div>
 
+        <span class="field-label">¿Qué 2 o 3 salidas te encajan?</span>
+        <p class="quiz-hint">Marca los días de ida. La vuelta se calcula con la duración que acabas de elegir.</p>
+        <div class="calendar-wrap quiz-calendar">
+          <div class="calendar-head">
+            <div class="cal-nav">
+              <button type="button" id="calPrev" aria-label="Mes anterior">‹</button>
+              <span id="calMonth"></span>
+              <button type="button" id="calNext" aria-label="Mes siguiente">›</button>
+            </div>
+          </div>
+          <div class="cal-weekdays">
+            <span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span>
+          </div>
+          <div class="cal-grid" id="calGrid"></div>
+          <p class="cal-hint" id="calHint"></p>
+          <ul class="quiz-date-picks" id="quizDatePicks"></ul>
+        </div>
+
         <span class="field-label">¿Hasta dónde estás dispuesto a volar?</span>
         <p class="quiz-hint">Nos ayuda a recomendar destinos a la distancia correcta.</p>
         <div class="choice-row" id="travelRangeChoice">
@@ -237,29 +255,11 @@
         <span class="rstep-pill" data-pill="2"><b>3</b> Experiencia</span>
       </div>
 
-      <!-- Página 1 · Fechas -->
+      <!-- Página 1 · Salida elegida entre las fechas del cuestionario -->
       <section class="result-step is-active" data-rstep="0">
-        <div class="calendar-wrap">
-          <div class="calendar-head">
-            <div>
-              <h3 class="results-title">Elige 2 o 3 salidas</h3>
-              <p class="results-sub cal-intro">Marca los días que te encajan. Cotizamos solo esas fechas, con el precio real de vuelo y hotel.</p>
-            </div>
-            <div class="cal-nav">
-              <button id="calPrev" aria-label="Mes anterior">‹</button>
-              <span id="calMonth"></span>
-              <button id="calNext" aria-label="Mes siguiente">›</button>
-            </div>
-          </div>
-          <p class="cal-budget" id="calBudget" hidden></p>
-          <div class="cal-weekdays">
-            <span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span>
-          </div>
-          <div class="cal-grid" id="calGrid"></div>
-          <p class="cal-hint" id="calHint"></p>
-          <p class="cal-trip" id="calTrip" hidden></p>
-          <div class="date-options" id="dateOptions"></div>
-        </div>
+        <h3 class="results-title">Elige tu salida</h3>
+        <p class="results-sub" id="dateChoiceHint">Estas son las fechas que marcaste al definir la duración. Precio en firme de vuelo y hotel.</p>
+        <div class="date-options" id="dateOptions"></div>
       </section>
 
       <!-- Página 2 · Destinos -->

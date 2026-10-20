@@ -83,9 +83,8 @@ function priceKeyFor(date) {
 function priceKey() {
   return priceKeyFor(state.selectedDate);
 }
-function resetDateSelection() {
+function resetDateQuotes() {
   state.selectedDate = null;
-  state.candidateDates = [];
   state.dateQuotes = {};
   state.dateLimitHint = false;
   state.livePrice = null;
@@ -153,6 +152,7 @@ function renderTripDays() {
   }
   if (dec) dec.disabled = days <= r.minDays;
   if (inc) inc.disabled = days >= r.maxDays;
+  if (typeof renderQuizPicks === "function") renderQuizPicks();
 }
 
 function validateStep(n) {
@@ -166,6 +166,10 @@ function validateStep(n) {
     if (err) { err.textContent = "Elige al menos un interés principal."; err.hidden = false; }
     return false;
   }
+  if (n === 4 && state.candidateDates.length < MIN_CANDIDATE_DATES) {
+    if (err) { err.textContent = "Elige 2 o 3 fechas de salida."; err.hidden = false; }
+    return false;
+  }
   return true;
 }
 
@@ -176,6 +180,10 @@ function showStep(n) {
   prevBtn.disabled = n === 0;
   nextBtn.textContent = n === STEPS - 1 ? "Ver mis destinos" : "Siguiente";
   if (quizError) quizError.hidden = true;
+  if (n === 4) {
+    if (!state.calMonth) state.calMonth = startMonth(minDate());
+    renderCalendar();
+  }
 }
 prevBtn.addEventListener("click", () => state.step > 0 && showStep(state.step - 1));
 nextBtn.addEventListener("click", () => {
@@ -669,9 +677,9 @@ async function applyAdjustDraft() {
     if (Number.isFinite(savedBudget)) state.prefs.budget = savedBudget;
     state.minBudget = Number.isFinite(data.minBudgetPerPerson) ? data.minBudgetPerPerson : null;
     state.discarded = new Set();
-    resetDateSelection();
+    resetDateQuotes();
     state.selectedTier = "none";
-    state.calMonth = startMonth(minDate());
+    if (!state.calMonth) state.calMonth = startMonth(minDate());
     $("#loading").hidden = true;
     updateCalendarMin();
     syncRefineUIFromPrefs();
@@ -800,9 +808,9 @@ async function submitQuiz() {
     state.prefs = data.prefs; // normalizado por el servidor
     state.minBudget = Number.isFinite(data.minBudgetPerPerson) ? data.minBudgetPerPerson : null;
     state.discarded = new Set();
-    resetDateSelection();
+    resetDateQuotes();
     state.selectedTier = "none";
-    state.calMonth = startMonth(minDate());
+    if (!state.calMonth) state.calMonth = startMonth(minDate());
     $("#loading").hidden = true;
     renderResults();
     $("#results").hidden = false;
@@ -915,6 +923,7 @@ function renderResults() {
   renderCalendar();
   showResultStep(0);
   updateSummary();
+  if (state.candidateDates.length >= MIN_CANDIDATE_DATES) quoteCandidateDates();
 }
 
 /* ===================== Navegación del carrito (3 páginas) ===================== */
@@ -1202,16 +1211,26 @@ function renderDateHint() {
   const n = state.candidateDates.length;
   if (state.dateLimitHint && n >= MAX_CANDIDATE_DATES) {
     el.textContent = "Máximo 3 fechas. Quita una si quieres cambiarla.";
-    return;
-  }
-  if (n === 0) el.textContent = "Marca 2 o 3 días de salida.";
-  else if (n === 1) el.textContent = "Añade al menos otra fecha para comparar el precio real.";
-  else if (!state.selectedDate) el.textContent = "Elige con cuál de estas salidas te quedas.";
-  else el.textContent = "Puedes cambiar la salida elegida o sustituir una fecha.";
+  } else if (n === 0) el.textContent = "Marca 2 o 3 días de salida.";
+  else if (n === 1) el.textContent = "Añade al menos otra fecha.";
+  else el.textContent = "Estas salidas se cotizan en firme cuando veas tus destinos.";
+}
+
+function renderQuizPicks() {
+  const list = $("#quizDatePicks");
+  if (!list) return;
+  const opts = { weekday: "short", day: "numeric", month: "short" };
+  list.innerHTML = "";
+  state.candidateDates.forEach((ds) => {
+    const li = document.createElement("li");
+    li.textContent = `${dateLabel(ds, opts)} → ${dateLabel(tripRange(ds).end, opts)}`;
+    list.appendChild(li);
+  });
 }
 
 function renderCalendar() {
   const grid = $("#calGrid");
+  if (!grid || !state.calMonth) return;
   grid.innerHTML = "";
   const month = state.calMonth;
   const monthLabel = month.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
@@ -1289,6 +1308,7 @@ function toggleCandidateDate(ds) {
     invalidateLivePrice();
   }
   renderCalendar();
+  if (!state.quote?.destinations?.length) return;
   updateSummary();
   renderConfigStrip();
   if (state.candidateDates.length >= MIN_CANDIDATE_DATES) quoteCandidateDates();
@@ -1307,8 +1327,10 @@ function chooseCandidateDate(ds) {
 function renderDateOptions() {
   const wrap = $("#dateOptions");
   renderDateHint();
+  renderQuizPicks();
   if (!wrap) return;
   wrap.innerHTML = "";
+  if (!state.quote?.destinations?.length) return;
   if (state.candidateDates.length < MIN_CANDIDATE_DATES) return;
 
   const priced = state.candidateDates.flatMap((ds) => {
@@ -1316,7 +1338,8 @@ function renderDateOptions() {
     if (!q || q.status !== "ok" || q.key !== priceKeyFor(ds) || !Number.isFinite(q.data?.perPerson)) return [];
     return [q.data.perPerson];
   });
-  const best = priced.length > 1 ? Math.min(...priced) : null;
+  const low = priced.length > 1 ? Math.min(...priced) : null;
+  const best = low != null && priced.filter((p) => p === low).length === 1 ? low : null;
   const opts = { weekday: "short", day: "numeric", month: "short" };
 
   for (const ds of state.candidateDates) {
@@ -1352,6 +1375,7 @@ function renderDateOptions() {
     }
     wrap.appendChild(card);
   }
+  if ($("#results")?.hidden) return;
   const rect = wrap.getBoundingClientRect();
   if (rect.top > window.innerHeight - 140) wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -1369,6 +1393,10 @@ $("#calNext").addEventListener("click", () => {
 /* ===================== Resumen ===================== */
 function updateSummary() {
   const bar = $("#summaryBar");
+  if ($("#results")?.hidden) {
+    if (bar) bar.hidden = true;
+    return;
+  }
   bar.hidden = false;
   const tier = currentTier();
   const tierName = state.selectedTier === "none" ? "Solo vuelo + hotel"
